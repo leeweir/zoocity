@@ -156,11 +156,68 @@ export function createEnvironment(scene, renderer, b) {
   // —— 昼夜循环 ——
   const fogDay = new THREE.Color(0xcfe3f0), fogNight = new THREE.Color(0x1a2036), fogDusk = new THREE.Color(0xe7b38a);
   const tmpC = new THREE.Color();
-  const state = { time: 9.5, speed: 24 / (20 * 60), paused: false }; // 20 分钟现实时间 = 1 天
+  const state = { time: 9.5, speed: 24 / (20 * 60), paused: false, weather: 'clear', weatherT: 90, wet: 0, interior: null }; // 20 分钟现实时间 = 1 天
+
+  // —— 夜间真实路灯：一池点光源，每帧挂到离玩家最近的路灯位置（只在夜晚开启）——
+  const lampPool = [];
+  const LAMP_N = IS_TOUCH ? 4 : 8;
+  // 灯光衰减距离 26m：只照亮附近一圈，让夜晚街道有明暗层次
+  for (let i = 0; i < LAMP_N; i++) {
+    const l = new THREE.PointLight(0xffc98a, 0, 26, 1.6);
+    l.castShadow = false;
+    scene.add(l); lampPool.push(l);
+  }
+  // 警车警灯光：红蓝两盏，跟随正在鸣笛的警车
+  const sirenR = new THREE.PointLight(0xff2a2a, 0, 22, 1.5), sirenB = new THREE.PointLight(0x2a6bff, 0, 22, 1.5);
+  scene.add(sirenR, sirenB);
+  let lampSpots = null;   // 由 main 在建造完成后传入：路灯坐标列表
+  let lampGrid = null;
+  const pickLamps = (focus) => {
+    if (!lampSpots || !lampSpots.length) return [];
+    if (!lampGrid) { lampGrid = new Map(); for (const p of lampSpots) { const k = Math.floor(p.x / 50) + ',' + Math.floor(p.z / 50); (lampGrid.get(k) || lampGrid.set(k, []).get(k)).push(p); } }
+    const near = [], gx = Math.floor(focus.x / 50), gz = Math.floor(focus.z / 50);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const p of lampGrid.get((gx + i) + ',' + (gz + j)) || []) {
+      const d = (p.x - focus.x) ** 2 + (p.z - focus.z) ** 2 + (p.y - focus.y) ** 2 * 0.5;
+      if (d < 70 * 70) near.push([d, p]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    return near.slice(0, LAMP_N).map(n => n[1]);
+  };
+  let lampT = 0;
+
+  // —— 天气粒子：雨 / 雪 / 沙暴，围绕相机 ——
+  const WN = IS_TOUCH ? 2500 : 6000;
+  const wGeo = new THREE.BufferGeometry();
+  const wPos = new Float32Array(WN * 3);
+  for (let i = 0; i < WN; i++) { wPos[i * 3] = (Math.random() - 0.5) * 120; wPos[i * 3 + 1] = Math.random() * 60; wPos[i * 3 + 2] = (Math.random() - 0.5) * 120; }
+  wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
+  // 圆形柔边粒子贴图（雪 / 沙），雨用竖向拉长的雨丝贴图
+  const dotTex = (() => {
+    if (typeof document === 'undefined') return null;
+    const mk = (w, h, draw) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); return t; };
+    return {
+      dot: mk(64, 64, (g, w) => { const gr = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, w, w); }),
+      streak: mk(64, 64, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.5, 'rgba(255,255,255,.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(w / 2 - 2, 0, 4, h); }),
+    };
+  })();
+  const wMat = new THREE.PointsMaterial({ color: 0xbfd6ea, size: 0.18, transparent: true, opacity: 0, depthWrite: false, map: dotTex?.dot || null, alphaTest: 0.01 });
+  const wPts = new THREE.Points(wGeo, wMat); wPts.frustumCulled = false; scene.add(wPts);
+  const WEATHER = {
+    clear: { fog: 1, col: 0xbfd6ea, size: 0.18, op: 0, fall: 0 },
+    rain: { fog: 0.45, col: 0xbfd6ea, size: 0.5, op: 0.65, fall: 32, wind: 3, tex: 'streak' },
+    snow: { fog: 0.35, col: 0xffffff, size: 0.22, op: 0.9, fall: 3.2, wind: 2, tex: 'dot' },
+    sand: { fog: 0.25, col: 0xd9b27a, size: 0.2, op: 0.7, fall: 1.5, wind: 14, tex: 'dot' },
+  };
+  // 各区可能的天气
+  const POOL = { savanna: ['clear', 'clear', 'clear', 'rain'], tundra: ['snow', 'snow', 'clear'], sahara: ['clear', 'clear', 'sand'], rainforest: ['rain', 'rain', 'clear'], bunnyburrow: ['clear', 'clear', 'rain'], rodentia: ['clear', 'rain'] };
+  let wCur = { ...WEATHER.clear };
   const sunDir = new THREE.Vector3();
   let districtFog = new THREE.Color(0xcfe3f0);
 
-  function update(dt, focus, districtKey) {
+  function setLamps(list) { lampSpots = list; }
+  function setWeather(w) { state.weather = w; state.weatherT = 120 + Math.random() * 120; }
+
+  function update(dt, focus, districtKey, extra = {}) {
     if (!state.paused) state.time = (state.time + dt * state.speed) % 24;
     const a = (state.time - 6) / 12 * Math.PI; // 6点日出 18点日落
     sunDir.set(Math.cos(a) * 0.8, Math.sin(a), 0.45).normalize();
@@ -180,16 +237,67 @@ export function createEnvironment(scene, renderer, b) {
     hemi.color.setRGB(0.81 - night * 0.35, 0.9 - night * 0.32, 1.0 - night * 0.1);
     renderer.toneMappingExposure = 1.05;
 
+    // —— 天气：每个地区按池子随机切换；室内无天气 ——
+    state.weatherT -= dt;
+    const pool = POOL[districtKey];
+    if (pool && (state.weatherT <= 0 || !pool.includes(state.weather))) setWeather(pool[Math.floor(Math.random() * pool.length)]);
+    const W = state.interior ? WEATHER.clear : WEATHER[state.weather] || WEATHER.clear;
+    const k = Math.min(1, dt * 0.5);
+    wCur.op += (W.op - wCur.op) * k; wCur.fog += (W.fog - wCur.fog) * k; wCur.fall = W.fall; wCur.wind = W.wind || 0;
+    wMat.opacity = wCur.op; wMat.size = W.size; wMat.color.lerp(tmpC.set(W.col), k);
+    if (dotTex && W.tex && wMat.map !== dotTex[W.tex]) { wMat.map = dotTex[W.tex]; wMat.needsUpdate = true; }
+    wPts.visible = wCur.op > 0.02;
+    if (wPts.visible) {
+      const P = wGeo.attributes.position.array;
+      const cx = extra.cam ? extra.cam.x : focus.x, cy = extra.cam ? extra.cam.y : focus.y, cz = extra.cam ? extra.cam.z : focus.z;
+      const sway = Math.sin(performance.now() * 0.0007);
+      for (let i = 0; i < WN; i++) {
+        P[i * 3 + 1] -= wCur.fall * dt * (0.8 + (i % 7) * 0.05);
+        P[i * 3] += wCur.wind * dt * (0.6 + sway * 0.4);
+        if (state.weather === 'snow') P[i * 3 + 2] += Math.sin(i + performance.now() * 0.001) * dt * 0.6;
+        if (P[i * 3 + 1] < 0) P[i * 3 + 1] += 60;
+        if (P[i * 3] > 60) P[i * 3] -= 120;
+      }
+      wGeo.attributes.position.needsUpdate = true;
+      wPts.position.set(cx, Math.max(0, cy - 30), cz);
+      wPts.renderOrder = 2;
+    }
+    state.wet += ((state.weather === 'rain' || state.weather === 'snow' ? 1 : 0) - state.wet) * Math.min(1, dt * 0.2);
+
     const D = DISTRICTS[districtKey];
     if (D) districtFog.lerp(tmpC.set(D.fog), Math.min(1, dt * 0.8));
     scene.fog.color.copy(districtFog).lerp(fogDusk, dusk * 0.4).lerp(fogNight, night * 0.9);
-    // 雨林雾更浓
-    const nearF = districtKey === 'rainforest' ? 90 : districtKey === 'tundra' ? 160 : 250;
-    scene.fog.near += (nearF - scene.fog.near) * Math.min(1, dt);
-    scene.fog.far += ((districtKey === 'rainforest' ? 700 : 1500) - scene.fog.far) * Math.min(1, dt);
+    if (state.weather === 'sand') scene.fog.color.lerp(tmpC.set(0xc9a46a), (1 - wCur.fog) * 0.8);
+    if (state.weather === 'rain') scene.fog.color.lerp(tmpC.set(0x7d8a96), (1 - wCur.fog) * 0.6 * (1 - night));
+    // 雨林雾更浓；坏天气能见度降低
+    const nearF = (districtKey === 'rainforest' ? 90 : districtKey === 'tundra' ? 160 : 250) * wCur.fog;
+    const farF = (districtKey === 'rainforest' ? 700 : 1500) * Math.max(0.18, wCur.fog);
+    // 室内：远雾推远、暖色，避免墙面被雾染色；天空球隐藏
+    const inside = !!state.interior;
+    sky.visible = !inside;
+    scene.fog.near += ((inside ? 200 : nearF) - scene.fog.near) * Math.min(1, inside ? 1 : dt);
+    scene.fog.far += ((inside ? 600 : farF) - scene.fog.far) * Math.min(1, inside ? 1 : dt);
+    if (inside) { sun.intensity = Math.max(sun.intensity, 1.2); hemi.intensity = 1.1; }
+    if (state.weather !== 'clear') { sun.intensity *= 0.35 + wCur.fog * 0.65; hemi.intensity *= 0.75 + wCur.fog * 0.25; }
     sky.position.copy(focus);
+
+    // —— 路灯 & 警灯 ——
+    const lampOn = THREE.MathUtils.smoothstep(night + (state.weather !== 'clear' ? 0.25 : 0), 0.35, 0.75);
+    lampT -= dt;
+    if (lampT <= 0) {
+      lampT = 0.35;
+      const near = pickLamps(focus);
+      lampPool.forEach((l, i) => { const p = near[i]; if (p) { l.position.set(p.x, p.y, p.z); l.userData.on = 1; } else l.userData.on = 0; });
+    }
+    for (const l of lampPool) l.intensity += ((l.userData.on ? lampOn * 38 : 0) - l.intensity) * Math.min(1, dt * 4);
+    const sv = extra.siren;
+    if (sv) {
+      const on = Math.floor(performance.now() / 160) % 2 === 0;
+      sirenR.position.set(sv.x - 0.6, sv.y + 2.2, sv.z); sirenB.position.set(sv.x + 0.6, sv.y + 2.2, sv.z);
+      sirenR.intensity = on ? 30 : 2; sirenB.intensity = on ? 2 : 30;
+    } else { sirenR.intensity = 0; sirenB.intensity = 0; }
   }
   const tmpV = new THREE.Vector3();
 
-  return { update, state, sun, hemi, sky };
+  return { update, state, sun, hemi, sky, setLamps, setWeather };
 }

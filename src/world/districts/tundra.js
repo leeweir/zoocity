@@ -35,7 +35,19 @@ const ICE = 0xbfe8f7, ROAD = 0x50565f, WALK = 0xc3ccd6;
 const WALLS = [0x2f8f8a, 0xb8322f, 0xefe3c4, 0x6aa6c9, 0xd9a441, 0xd99aa0, 0x2d4a6b, 0x8cc7b5, 0xf2efe6, 0x9b4a6e];
 const DOMES = [GOLD, 0x2f8f8a, 0xc0392b, 0x3d6fb6, 0x3f8f5f, 0xe8e8e8];
 
+// 圆形柔边雪花贴图
+function snowDot() {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  return new ctx_THREE.CanvasTexture(c);
+}
+let ctx_THREE = null;
+
 export function build(ctx) {
+  ctx_THREE = ctx.THREE;
   const { b, col, layout, scene } = ctx;
   const { DISTRICTS, ROAD_W, SIDEWALK_W: SW, LANDMARKS, blocksOf } = layout;
   const D = DISTRICTS.tundra, R = D.rect, hw = ROAD_W / 2;
@@ -861,7 +873,7 @@ export function build(ctx) {
     const pos = new Float32Array(N * 3);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const snow = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.3, transparent: true, opacity: 0.9, depthWrite: false }));
+    const snow = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.22, transparent: true, opacity: 0.9, depthWrite: false, map: snowDot(), alphaTest: 0.01 }));
     snow.frustumCulled = false;
     let camX = CX, camZ = CZ;
     snow.onBeforeRender = (r, s, cam) => { camX = cam.position.x; camZ = cam.position.z; };

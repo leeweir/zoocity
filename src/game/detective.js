@@ -227,6 +227,7 @@ export class Detective {
     if (a.evidence.has(id)) return;
     a.evidence.add(id);
     const e = isClue ? a.def.clues[id] : a.def.evidence[id];
+    this.sfx?.(isClue ? 'clue' : 'evidence');
     this.ui.toast(`${e.icon} 证据已加入档案：<b>${esc(e.name)}</b> <kbd>J</kbd>`);
   }
 
@@ -273,12 +274,12 @@ export class Detective {
     const right = culprit === d.solution.culprit;
     const relevant = ev.filter(e => d.solution.evidence.includes(e)).length;
     if (right && relevant >= d.solution.need) {
-      this.ui.stamp('结案！', '#3bb273');
+      this.ui.stamp('结案！', '#3bb273'); this.sfx?.('solve');
       setTimeout(() => this._play(d.epilogue, npcKey, () => this._complete()), 900);
     } else if (right) {
       this._play([['buddy', '方向是对的，但这些证据还不足以说服别人。再挑挑能直接证明的证据。'], ['npc', '警官，你说的我不太信服……']], npcKey);
     } else {
-      this.rep = Math.max(0, this.rep - 10);
+      this.rep = Math.max(0, this.rep - 10); this.sfx?.('fail');
       const n = d.npcs[culprit];
       this._play([['buddy', `等等……${n.name}？这些证据说不通。我们是不是漏了什么？`], ['旁白', '推理失败（声望 -10）。回顾档案里的证据，再试一次。']], npcKey);
     }

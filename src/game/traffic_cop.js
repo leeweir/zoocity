@@ -120,6 +120,7 @@ export class TrafficCop {
       if (rel.dot(fwd) < 0) { this.ui.toast('🏃 跑到车头前面才能拦下它！（或者开警车追）', 1800); return true; }
     }
     this.combo++;
+    this.sfx?.('ticket');
     const bonus = Math.min(10, (this.combo - 1) * 2);
     const gain = off.pts + bonus;
     this.score += gain; this.tickets++;

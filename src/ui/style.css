@@ -153,13 +153,15 @@ body.touch #stick.on { opacity: 1; }
 .tb.sm { width: 48px; height: 48px; font-size: 20px; border-radius: 14px; }
 #touchBtns { position: fixed; right: calc(18px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 2;
   display: grid !important; gap: 12px; align-items: center; justify-items: center;
-  grid-template-areas: ". q swap" "car jump act"; }
+  grid-template-areas: "down fly q swap" ". car jump act"; }
 body:not(.touch) #touchBtns { display: none !important; }
 #touchBtns [data-k=KeyE] { grid-area: act; }
 #touchBtns [data-k=Space] { grid-area: jump; }
 #touchBtns [data-k=KeyF] { grid-area: car; }
 #touchBtns [data-k=KeyQ] { grid-area: q; }
 #touchBtns [data-k=Tab] { grid-area: swap; }
+#touchBtns [data-k=KeyG] { grid-area: fly; }
+#touchBtns [data-k=KeyC] { grid-area: down; }
 #touchTop { position: fixed; right: calc(16px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top)); gap: 8px; z-index: 2; }
 
 body.touch #minimap { top: calc(76px + env(safe-area-inset-top)); width: 150px; height: 150px; }

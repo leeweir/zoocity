@@ -1,4 +1,4 @@
-// 玩家控制：第三人称移动、跳跃、冲刺、角色切换（朱迪 / 尼克）、驾驶警车
+// 玩家控制：第三人称移动、跳跃、冲刺、竹蜻蜓飞行、角色切换（朱迪 / 尼克）、驾驶警车
 import * as THREE from 'three';
 
 const HEROES = {
@@ -24,10 +24,10 @@ export class Player {
     this.vehicle = null;
     this.stamina = 1;
     this.frozen = false;
-    this.gliding = false;
-    this.glider = makeGlider();
-    this.glider.visible = false;
-    this.root.add(this.glider);
+    this.flying = false;
+    this.copter = makeCopter();       // 竹蜻蜓：戴在头顶
+    this.copter.visible = false;
+    this.root.add(this.copter);
     this._swapBuddy();
   }
 
@@ -79,76 +79,87 @@ export class Player {
       const targetYaw = Math.atan2(wx, wz);
       let d = targetYaw - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       this.yaw += d * Math.min(1, dt * 12);
-      // 滑翔时摇杆/方向键只负责转向，速度由滑翔物理决定
-      if (!this.gliding) {
-        const accel = this.onGround ? 14 : 4;
-        this.vel.x += (wx * speed - this.vel.x) * Math.min(1, dt * accel);
-        this.vel.z += (wz * speed - this.vel.z) * Math.min(1, dt * accel);
-      } else this.yaw -= d * Math.min(1, dt * 12) * 0.55;   // 伞转向比走路慢一些
-    } else if (!this.gliding) {
-      const damp = this.onGround ? 12 : 1;
+      if (this.flying) speed = sprint ? 30 : 14;      // 竹蜻蜓：水平飞行速度
+      const accel = this.flying ? 3.5 : this.onGround ? 14 : 4;
+      this.vel.x += (wx * speed - this.vel.x) * Math.min(1, dt * accel);
+      this.vel.z += (wz * speed - this.vel.z) * Math.min(1, dt * accel);
+    } else {
+      const damp = this.flying ? 2.5 : this.onGround ? 12 : 1;
       this.vel.x -= this.vel.x * Math.min(1, dt * damp);
       this.vel.z -= this.vel.z * Math.min(1, dt * damp);
     }
     if (!sprint || !moving) this.stamina = Math.min(1, this.stamina + dt * 0.18);
 
-    if (input.hit('Space') && !this.frozen) {
-      if (this.onGround) { this.vel.y = S.jump; this.onGround = false; }
-      // 空中再按跳跃：展开 / 收起滑翔伞（离地 > 2m 才能展开）
-      else if (this.gliding) this.gliding = false;
-      else if (this.pos.y - this.col.groundAt(this.pos.x, this.pos.z, this.pos.y) > 2) this.gliding = true;
+    // 竹蜻蜓：G 键（或触屏🚁按钮）开 / 关；也可在空中连按两次跳跃起飞
+    if (!this.frozen && input.hit('KeyG')) this.setFlying(!this.flying);
+    if (input.hit('Space') && !this.frozen && !this.flying) {
+      if (this.onGround) { this.vel.y = S.jump; this.onGround = false; this._airJumpT = 0.45; }
+      else if (this._airJumpT > 0) this.setFlying(true);
     }
-    if (this.gliding) {
-      // 滑翔：缓慢下沉、前向速度更快、可转向；按住冲刺键俯冲加速
-      const dive = sprint;
-      const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-      const fwd = dive ? 19 : 12.5;
-      const k = Math.min(1, dt * 1.6);
-      this.vel.x += (fx * fwd - this.vel.x) * k;
-      this.vel.z += (fz * fwd - this.vel.z) * k;
-      const sink = dive ? -6 : -1.6;
-      this.vel.y += (sink - this.vel.y) * Math.min(1, dt * 3);
-      // 上升气流：气候墙排气塔 / 雨林雾塔附近可以爬升
-      if (this.updraft?.(this.pos)) this.vel.y += (4 - this.vel.y) * Math.min(1, dt * 2);
+    if (this._airJumpT > 0) this._airJumpT -= dt;
+    if (this.flying) {
+      // 自由飞行：Space 上升、C/Ctrl 下降，不按则悬停；限高 220m
+      let vy = 0;
+      if (input.down('Space')) vy += 1;
+      if (input.down('KeyC') || input.down('ControlLeft')) vy -= 1;
+      const climb = sprint ? 16 : 9;
+      this.vel.y += (vy * climb - this.vel.y) * Math.min(1, dt * (vy ? 4 : 9));
+      if (this.pos.y > 220 && this.vel.y > 0) this.vel.y = 0;
     } else this.vel.y -= 22 * dt;
     this.pos.addScaledVector(this.vel, dt);
     const g = this.col.resolve(this.pos, S.radius, S.height, 0.6);
     if (this.pos.y <= g + 0.001) {
       if (this.pos.y < g - 0.0) this.pos.y = this.onGround ? g : Math.max(this.pos.y, g); // 上台阶
       this.pos.y = g; this.vel.y = Math.max(0, this.vel.y); this.onGround = true;
-      this.gliding = false;
-    } else if (this.onGround && this.pos.y - g < 0.45 && this.vel.y <= 0) {
+      // 飞行中向下落到地面时自动收起竹蜻蜓
+      if (this.flying && this._landT > 0.25) this.setFlying(false);
+      this._landT = (this._landT || 0) + dt;
+    } else if (this.onGround && !this.flying && this.pos.y - g < 0.45 && this.vel.y <= 0) {
       this.pos.y = g; // 贴地下台阶
-    } else this.onGround = false;
+    } else { this.onGround = false; this._landT = 0; }
     if (this.pos.y < -20) { this.pos.y = 5; }
 
     const hs = Math.hypot(this.vel.x, this.vel.z);
     this.root.position.copy(this.pos);
     this.root.rotation.y = this.yaw;
-    // 滑翔伞外观：伞翼随转向倾斜
-    this.glider.visible = this.gliding;
-    if (this.gliding) {
-      this._bank = (this._bank || 0) + (((this._lastYaw ?? this.yaw) - this.yaw) / Math.max(dt, 1e-3) * 0.12 - (this._bank || 0)) * Math.min(1, dt * 4);
-      this.glider.rotation.z = THREE.MathUtils.clamp(this._bank, -0.5, 0.5);
-      this.root.rotation.z = this.glider.rotation.z * 0.3;
-    } else this.root.rotation.z = 0;
+    // 竹蜻蜓外观：桨叶旋转，飞行时身体随速度前倾、转向侧倾
+    const cop = this.copter;
+    cop.visible = this.flying || this._spin > 0.05;
+    this._spin = THREE.MathUtils.lerp(this._spin || 0, this.flying ? 1 : 0, Math.min(1, dt * 3));
+    cop.userData.blades.rotation.y += dt * 38 * this._spin;
+    cop.position.y = (this.model.userData.totalHeight || this.model.userData.height || 1.3) + 0.06;
+    if (this.flying) {
+      const turn = THREE.MathUtils.clamp(((this._lastYaw ?? this.yaw) - this.yaw) / Math.max(dt, 1e-3) * 0.08, -0.35, 0.35);
+      this._bank = THREE.MathUtils.lerp(this._bank || 0, turn, Math.min(1, dt * 4));
+      this._pitch = THREE.MathUtils.lerp(this._pitch || 0, Math.min(0.32, hs / 30 * 0.32), Math.min(1, dt * 4));
+      this.model.rotation.set(this._pitch, 0, this._bank);
+      this.model.position.y = Math.sin(performance.now() * 0.004) * 0.06;   // 悬停轻微上下浮动
+    } else { this.model.rotation.set(0, 0, 0); this.model.position.y = 0; }
     this._lastYaw = this.yaw;
     const ud = this.model.userData;
-    ud.setPose?.(this.gliding ? 'sit' : !this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
-    ud.update?.(dt, this.onGround ? hs : 0);
+    ud.setPose?.(this.flying ? 'jump' : !this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
+    ud.update?.(dt, this.onGround && !this.flying ? hs : 0);
     this._updateBuddy(dt);
     return hs;
   }
 
+  setFlying(on) {
+    if (this.vehicle) return;
+    this.flying = on;
+    if (on) { this.onGround = false; this.vel.y = Math.max(this.vel.y, 5); this._landT = 0; }
+    this.onFlyChange?.(on);
+  }
+
   _updateBuddy(dt) {
     // 伙伴站在侧后方（不挡住身后的相机）
-    const target = new THREE.Vector3(this.pos.x - Math.sin(this.yaw) * 0.5 + Math.cos(this.yaw) * 1.3, this.pos.y, this.pos.z - Math.cos(this.yaw) * 0.5 - Math.sin(this.yaw) * 1.3);
+    const flyOff = this.flying ? 2.2 : 0;
+    const target = new THREE.Vector3(this.pos.x - Math.sin(this.yaw) * (0.5 + flyOff) + Math.cos(this.yaw) * (1.3 + flyOff * 0.5), this.pos.y, this.pos.z - Math.cos(this.yaw) * (0.5 + flyOff) - Math.sin(this.yaw) * (1.3 + flyOff * 0.5));
     const d = target.clone().sub(this.buddyPos); d.y = 0;
     const dist = d.length();
     let sp = 0;
-    if (dist > 25) { this.buddyPos.copy(target); }
+    if (dist > 25) { this.buddyPos.copy(target); if (this.flying) this.buddyPos.y = this.pos.y; }
     else if (dist > 0.4) {
-      sp = Math.min(dist * 2.4, 9);
+      sp = Math.min(dist * 2.4, this.flying ? 34 : 9);
       this.buddyPos.addScaledVector(d.normalize(), sp * dt);
       const ty = Math.atan2(d.x, d.z);
       let a = ty - this.buddyYaw; a = Math.atan2(Math.sin(a), Math.cos(a));
@@ -160,13 +171,19 @@ export class Player {
     const p = { x: this.buddyPos.x, y: this.buddyPos.y, z: this.buddyPos.z };
     const g = this.col.resolve(p, 0.3, 1.2, 0.8);
     this.buddyPos.x = p.x; this.buddyPos.z = p.z;
-    this.buddyPos.y += (g - this.buddyPos.y) * Math.min(1, dt * 10);
+    // 飞行时伙伴高度跟随玩家（不低于地面），否则落地
+    const ty = this.flying ? Math.max(g, this.pos.y + 0.8) : g;
+    this.buddyPos.y += (ty - this.buddyPos.y) * Math.min(1, dt * (this.flying ? 3 : 10));
     this.buddy.position.copy(this.buddyPos);
+    if (!this.buddyCopter) { this.buddyCopter = makeCopter(); this.buddy.add(this.buddyCopter); }
+    this.buddyCopter.visible = this.flying;
+    this.buddyCopter.position.y = (this.models[this.buddyKey].userData.totalHeight || this.models[this.buddyKey].userData.height || 1.3) + 0.06;
+    this.buddyCopter.userData.blades.rotation.y += dt * 38;
     this.buddy.rotation.y = this.buddyYaw;
     this.buddy.visible = !this.vehicle;
     const m = this.models[this.buddyKey].userData;
-    m.setPose?.(sp > 0.2 ? (sp > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
-    m.update?.(dt, sp);
+    m.setPose?.(this.flying ? 'jump' : sp > 0.2 ? (sp > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
+    m.update?.(dt, this.flying ? 0 : sp);
   }
 
   // —— 驾驶 ——
@@ -200,7 +217,8 @@ export class Player {
     else v.speed -= v.speed * Math.min(1, dt * 0.9);
     if (input.down('Space')) v.speed -= v.speed * Math.min(1, dt * 4);
     v.speed = Math.max(maxB, Math.min(maxF, v.speed));
-    const turn = st * Math.min(1, Math.abs(v.speed) / 4) * 1.6 * Math.sign(v.speed || 1);
+    const grip = 1 - (this.wet || 0) * 0.35;      // 雨雪天转向更飘
+    const turn = st * Math.min(1, Math.abs(v.speed) / 4) * 1.6 * grip * Math.sign(v.speed || 1);
     v.yaw += turn * dt;
     v.pos.x += Math.sin(v.yaw) * v.speed * dt;
     v.pos.z += Math.cos(v.yaw) * v.speed * dt;
@@ -215,34 +233,24 @@ export class Player {
   }
 }
 
-// 滑翔伞：拱形伞翼（ZPD 蓝 + 胡萝卜橙条纹） + 伞绳，挂在角色头顶上方
-function makeGlider() {
+// 竹蜻蜓：竹柄 + 两片桨叶（黄色桨叶，头顶小底座）
+function makeCopter() {
   const g = new THREE.Group();
-  const span = 5.2, chord = 1.6, H = 3.2;
-  const cells = 9;
-  for (let i = 0; i < cells; i++) {
-    const a0 = -0.95 + (i / cells) * 1.9, a1 = -0.95 + ((i + 1) / cells) * 1.9;
-    const am = (a0 + a1) / 2;
-    const x = Math.sin(am) * span / 2, y = H + Math.cos(am) * 0.9;
-    const cellW = span / cells * 1.08;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(cellW, 0.16, chord), new THREE.MeshStandardMaterial({ color: i % 2 ? 0x1f3b73 : 0xf08a24, roughness: 0.6, side: THREE.DoubleSide }));
-    m.position.set(x, y, 0.1);
-    m.rotation.z = -am;
-    m.castShadow = true;
-    g.add(m);
-  }
-  // 伞绳
-  const lineMat = new THREE.LineBasicMaterial({ color: 0xdddddd });
-  const pts = [];
-  for (let i = 0; i <= cells; i += 3) {
-    const a = -0.95 + (i / cells) * 1.9;
-    const tip = new THREE.Vector3(Math.sin(a) * span / 2, H + Math.cos(a) * 0.9 - 0.1, 0.1);
-    for (const sx of [-0.18, 0.18]) pts.push(new THREE.Vector3(sx, 1.05, 0), tip);
-  }
-  g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
-  // ZPD 标志
-  const badge = new THREE.Mesh(new THREE.CircleGeometry(0.35, 16), new THREE.MeshBasicMaterial({ color: 0xf2c14e, side: THREE.DoubleSide }));
-  badge.position.set(0, H + 0.99, 0.1); badge.rotation.x = -Math.PI / 2; g.add(badge);
+  const bamboo = new THREE.MeshStandardMaterial({ color: 0xc8a25a, roughness: 0.6 });
+  const blade = new THREE.MeshStandardMaterial({ color: 0xf4c430, roughness: 0.45, side: THREE.DoubleSide });
+  const base = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), bamboo);
+  g.add(base);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.26, 8), bamboo);
+  stick.position.y = 0.13; g.add(stick);
+  // 竹节
+  for (const y of [0.07, 0.17]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 8), bamboo); r.position.y = y; g.add(r); }
+  const blades = new THREE.Group(); blades.position.y = 0.27; g.add(blades);
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), bamboo); blades.add(hub);
+  const shape = new THREE.Shape();
+  shape.moveTo(0, -0.035); shape.quadraticCurveTo(0.25, -0.06, 0.42, -0.03); shape.quadraticCurveTo(0.46, 0, 0.42, 0.03); shape.quadraticCurveTo(0.25, 0.06, 0, 0.035); shape.closePath();
+  const bg = new THREE.ShapeGeometry(shape, 8).rotateX(-Math.PI / 2);
+  for (const sgn of [1, -1]) { const m = new THREE.Mesh(bg, blade); m.rotation.y = sgn > 0 ? 0 : Math.PI; m.rotation.x = 0.12 * sgn; m.castShadow = true; blades.add(m); }
+  g.userData.blades = blades;
   return g;
 }
 
@@ -259,7 +267,7 @@ export class ThirdPersonCamera {
     this.yaw -= input.mouseDX * sens;
     this.pitch = Math.min(1.25, Math.max(-0.35, this.pitch + input.mouseDY * sens));
     const v = player.vehicle;
-    const base = v ? 9 : player.gliding ? 8 : player.stats.camDist;
+    const base = v ? 9 : player.flying ? 7.5 : player.stats.camDist;
     if (input.wheel) this.zoom = Math.min(3.0, Math.max(0.4, (this.zoom || 1) + input.wheel * 0.12));
     this.targetDist = base * (this.zoom || 1);
     if (v && !input.locked && Math.abs(v.speed) > 2) {

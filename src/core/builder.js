@@ -138,6 +138,7 @@ export class Builder {
     this.receiveShadow = receiveShadow;
     this.buckets = new Map();
     this.meshes = [];
+    this.lamps = [];
     this.reject = null;   // (x0,z0,x1,z1,top) => bool：为 true 时丢弃该几何体（弧形大道走廊让路）
   }
 
@@ -151,6 +152,13 @@ export class Builder {
   add(geometry, matrix, color, o = {}) {
     const g = prep(geometry);
     g.applyMatrix4(matrix);
+    // 记录路灯灯头：小块自发光几何体（直径 < 1.4m），离地 3.5–9.5m
+    if (o.mat === 'glow' && this.lamps) {
+      g.computeBoundingBox();
+      const bb = g.boundingBox, sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z, sy = bb.max.y - bb.min.y;
+      const cy = (bb.min.y + bb.max.y) / 2;
+      if (sx < 1.4 && sz < 1.4 && sy < 1.2 && cy > 3.5 && cy < 9.5) this.lamps.push({ x: (bb.min.x + bb.max.x) / 2, y: cy - 0.4, z: (bb.min.z + bb.max.z) / 2 });
+    }
     _c.set(color);
     // 轻微随机明暗，避免大面积纯色显得塑料
     const jitter = o.jitter ?? 0;

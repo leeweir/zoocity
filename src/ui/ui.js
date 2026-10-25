@@ -27,7 +27,7 @@ export class UI {
           <kbd>WASD</kbd> 移动 · <kbd>Shift</kbd> 奔跑 · <kbd>Space</kbd> 跳跃 · <kbd>E</kbd> 互动<br>
           <kbd>Q</kbd> 侦探感知 · <kbd>Tab</kbd> 切换角色 · <kbd>F</kbd> 上/下警车 · <kbd>H</kbd> 警笛<br>
           <kbd>J</kbd> 侦探档案 · <kbd>M</kbd> 地图/快速出行 · <kbd>Esc</kbd> 菜单<br>
-          空中 <kbd>Space</kbd> 滑翔伞 · <kbd>T</kbd> 交警模式
+          <kbd>G</kbd> 竹蜻蜓 · <kbd>C</kbd> 下降 · <kbd>T</kbd> 交警模式
         </div>
         <div id="fps"></div>
         <div id="touchBtns">
@@ -36,6 +36,8 @@ export class UI {
           <button class="tb" data-k="KeyF" id="tbCar">🚓</button>
           <button class="tb" data-k="KeyQ">🔍</button>
           <button class="tb" data-k="Tab" id="tbSwap">🦊</button>
+          <button class="tb" data-k="KeyG" id="tbFly">🚁</button>
+          <button class="tb" data-k="KeyC" id="tbDown">⬇</button>
         </div>
         <div id="touchTop">
           <button class="tb sm" data-k="KeyJ">📒</button>
@@ -79,7 +81,7 @@ export class UI {
     }
   }
   // 根据上下文更新触屏按钮：act = 主互动按钮文字（null 隐藏），car = 是否显示上/下车，driving
-  touchState({ act, car, driving, hero }) {
+  touchState({ act, car, driving, hero, flying }) {
     const a = $('#tbAct');
     if (!a) return;
     a.style.display = act ? '' : 'none';
@@ -88,6 +90,8 @@ export class UI {
     $('#tbCar').textContent = driving ? '下车' : '🚓';
     $('#tbSiren').style.display = driving ? '' : 'none';
     $('#tbSwap').textContent = hero === 'judy' ? '🦊' : '🐰';
+    $('#tbDown').style.display = flying ? '' : 'none';
+    const j = this.root.querySelector('[data-k=Space]'); if (j) j.textContent = flying ? '⬆' : '跳';
   }
 
   show(id, on = true) { $('#' + id).classList.toggle('hidden', !on); }
@@ -198,6 +202,7 @@ export class UI {
     d.full = text; d.tEl = tEl;
     d.typing = setInterval(() => {
       i += 2; tEl.textContent = text.slice(0, i);
+      if (i % 4 === 0) this.onType?.();
       if (i >= text.length) { clearInterval(d.typing); d.typing = null; }
     }, 22);
     d.onLine?.(who);

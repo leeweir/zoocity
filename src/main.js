@@ -4,11 +4,14 @@ import { Builder, SharedUniforms, rng } from './core/builder.js';
 import { Colliders } from './core/collision.js';
 import * as tex from './core/tex.js';
 import { Input, IS_TOUCH } from './core/input.js';
+import { Audio } from './core/audio.js';
+import { Perf } from './core/perf.js';
 import * as layout from './world/layout.js';
 import { createEnvironment } from './world/environment.js';
 import { buildHighway } from './world/highway.js';
 import { buildCurves, shouldReject } from './world/curves.js';
 import { buildFrontage, frontageReject } from './world/frontage.js';
+import { buildInteriors, interiorAt, INTERIORS } from './world/interiors.js';
 import { Player, ThirdPersonCamera } from './game/player.js';
 import { Vehicle, Traffic, createCarModel } from './game/vehicles.js';
 import { Crowd, ambientLine, iconOf } from './game/npcs.js';
@@ -25,8 +28,7 @@ const districtModules = import.meta.glob('./world/districts/*.js');
 // —— 渲染器 ——
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-// 触屏设备（iPad/手机）GPU 较弱且像素密度高：降低渲染分辨率、关软阴影
-renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH ? 1.25 : 1.75));
+// 像素比由 Perf（自适应分辨率 + 画质档位）管理
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -34,9 +36,13 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, IS_TOUCH ? 2200 : 6000);
+const perf = new Perf(renderer, camera, { touch: IS_TOUCH });
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
 const ui = new UI();
+const audio = new Audio();
+for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, () => audio.unlock(), { passive: true });
+ui.onType = () => audio.sfx('type');
 const input = new Input(canvas);
 ui.bindTouch(input);
 const col = new Colliders();
@@ -67,6 +73,18 @@ const ctx = {
   THREE, scene, b, col, layout, rng, tex, interact,
   animate: fn => animators.push(fn),
   addLabel: (x, y, z, text, color) => labels.push({ x, y, z, text, color }),
+  teleport: (x, y, z, yaw) => {
+    if (player.vehicle) player.exitVehicle();
+    if (player.flying) player.setFlying(false);
+    player.setPosition(x, y, z, yaw);
+    cam.focus.set(x, y + 1.15, z); cam.yaw = yaw + Math.PI; cam.dist = 2;
+    audio.sfx('door');
+  },
+  onEnterInterior: name => {
+    insideName = name;
+    if (name) ui.districtBanner(name, 'INSIDE'); else lastDistrict = null;
+  },
+  say: (speaker, lines) => ui.dialog(lines.map(t => [speaker, t]), w => ({ name: w })),
 };
 const POIS = {};
 
@@ -95,11 +113,15 @@ async function buildWorld() {
   setLoad('正在铺设弧形大道…', keys.length / (keys.length + 1.4));
   try { buildCurves(ctx); } catch (e) { console.error('[world] 弧形大道建造失败', e); }
   try { buildFrontage(ctx); } catch (e) { console.error('[world] 辅路建造失败', e); }
+  try { buildInteriors(ctx); } catch (e) { console.error('[world] 室内建造失败', e); }
   setLoad('正在架设环城高架…', keys.length / (keys.length + 1.4));
   try { buildHighway(ctx); } catch (e) { console.error('[world] 高架建造失败', e); }
   setLoad('正在合并网格…', (keys.length + 0.6) / (keys.length + 1.4));
   await new Promise(r => setTimeout(r, 16));
   b.flush();
+  env.setLamps(b.lamps);
+  perf.register(b.meshes);
+  console.log(`[world] lamps: ${b.lamps.length}`);
   let tris = 0; scene.traverse(o => { if (o.isMesh && o.geometry.index) tris += o.geometry.index.count / 3; });
   console.log(`[world] meshes: ${b.meshes.length}, triangles ≈ ${(tris / 1e6).toFixed(2)}M`);
 }
@@ -147,6 +169,7 @@ async function start(heroKey) {
   ui.setHero(player.current);
   started = true;
   detective.restore();
+  if (localStorage.getItem?.('zootopia-pos')) restorePos();
   if (!detective.active && !detective.solved.donut) {
     setTimeout(() => ui.dialog([
       ['旁白', '动物城，一个“一切皆有可能”的城市。从冰川镇到撒哈拉广场，从雨林区到小型啮齿镇，不同体型、不同习性的动物在这里共同生活。'],
@@ -168,15 +191,16 @@ async function init() {
   cam.focus.copy(player.pos);
   cam.yaw = player.yaw + Math.PI;
   makeCruisers();
-  traffic = new Traffic(scene, IS_TOUCH ? 40 : 80);
-  traffic.addLoopCars(IS_TOUCH ? 14 : 26);
-  traffic.addCurveCars(IS_TOUCH ? 2 : 4);
-  crowd = new Crowd(scene, col, IS_TOUCH ? 28 : 55);
+  const Q = perf.q;
+  traffic = new Traffic(scene, Math.round(80 * Q.traffic));
+  traffic.addLoopCars(Math.round(26 * Q.traffic));
+  traffic.addCurveCars(Q.traffic < 0.7 ? 2 : 4);
+  crowd = new Crowd(scene, col, Math.round(55 * Q.crowd));
   detective = new Detective({ scene, col, ui, player, interact });
   cop = new TrafficCop({ scene, ui, traffic, player, crowd });
+  detective.sfx = n => audio.sfx(n); cop.sfx = n => audio.sfx(n);
   detective.onTrafficDuty = () => cop.start();
-  // 上升气流：撒哈拉排气塔、冰川造雪塔、雨林喷淋塔附近能爬升
-  player.updraft = p => (p.x > 325 && p.x < 350) || (p.z > -350 && p.z < -325 && p.x > -700 && p.x < 300) || (Math.hypot(p.x + 660, p.z + 80) < 30);
+  player.onFlyChange = on => { ui.toast(on ? '🚁 竹蜻蜓起飞！Space 上升 · C 下降 · Shift 加速 · G 降落' : '🚁 竹蜻蜓收起', 2200); audio?.copter(on); };
   minimap = new Minimap(ui, travelTo);
   setLoad('选择你的角色', 1);
   const pick = title.querySelector('.pick');
@@ -185,6 +209,76 @@ async function init() {
   pick.querySelectorAll('.heroCard').forEach(c => c.onclick = () => start(c.dataset.h));
   requestAnimationFrame(loop);
 }
+
+// —— 存档导出 / 导入：所有 zootopia-* 与 zoo-* 本地数据打包成一段存档码，可下载为文件或复制 ——
+const SAVE_KEYS = k => k.startsWith('zootopia-') || k.startsWith('zoo-');
+function collectSave() {
+  const data = {};
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (SAVE_KEYS(k)) data[k] = localStorage.getItem(k); } } catch { /* */ }
+  // 当前位置也一起存
+  data['zootopia-pos'] = JSON.stringify({ x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, hero: player.current, time: env.state.time });
+  return { v: 1, game: 'zootopia-detective', at: new Date().toISOString(), data };
+}
+const toCode = o => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+const fromCode = c => JSON.parse(decodeURIComponent(escape(atob(c.trim()))));
+function exportSave() {
+  const save = collectSave(), code = toCode(save);
+  const m = ui.modal(`<div class="sheet" style="max-width:620px"><button class="close">×</button>
+    <h2>💾 导出存档</h2>
+    <div class="meta">包含案件进度、声望、交警最高分、音频设置和当前位置。换设备时导入即可继续。</div>
+    <textarea readonly style="width:100%;height:120px;font:12px monospace;border-radius:10px;padding:10px;border:2px solid #d9c497">${code}</textarea>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn" data-a="dl">⬇ 下载存档文件</button>
+      <button class="btn ghost" data-a="copy">📋 复制存档码</button>
+    </div></div>`);
+  m.querySelector('[data-a=dl]').onclick = () => {
+    const blob = new Blob([JSON.stringify(save, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `zootopia-save-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  m.querySelector('[data-a=copy]').onclick = async e => {
+    try { await navigator.clipboard.writeText(code); e.target.textContent = '✅ 已复制'; }
+    catch { m.querySelector('textarea').select(); document.execCommand?.('copy'); e.target.textContent = '✅ 已复制'; }
+  };
+}
+function applySave(save) {
+  if (!save || save.game !== 'zootopia-detective' || !save.data) throw new Error('不是有效的动物城存档');
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (SAVE_KEYS(k)) localStorage.removeItem(k); }
+    for (const [k, v] of Object.entries(save.data)) if (SAVE_KEYS(k)) localStorage.setItem(k, v);
+  } catch { throw new Error('浏览器禁止了本地存储（无痕模式？）'); }
+  location.reload();
+}
+function importSave() {
+  const m = ui.modal(`<div class="sheet" style="max-width:620px"><button class="close">×</button>
+    <h2>📂 导入存档</h2>
+    <div class="meta">选择存档文件，或粘贴存档码。导入会覆盖当前进度。</div>
+    <input type="file" accept=".json,application/json" style="margin:8px 0">
+    <textarea placeholder="或者在这里粘贴存档码…" style="width:100%;height:110px;font:12px monospace;border-radius:10px;padding:10px;border:2px solid #d9c497"></textarea>
+    <div class="err" style="color:#e5534b;min-height:20px;margin-top:6px"></div>
+    <button class="btn" data-a="go">导入并重新载入</button></div>`);
+  const err = t => m.querySelector('.err').textContent = t;
+  m.querySelector('input[type=file]').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { applySave(JSON.parse(await f.text())); } catch (x) { err('读取失败：' + x.message); }
+  };
+  m.querySelector('[data-a=go]').onclick = () => {
+    const t = m.querySelector('textarea').value; if (!t.trim()) return err('请先粘贴存档码或选择文件');
+    try { applySave(t.trim().startsWith('{') ? JSON.parse(t) : fromCode(t)); } catch (x) { err('存档码无效：' + x.message); }
+  };
+}
+// 读档时恢复位置
+function restorePos() {
+  try {
+    const p = JSON.parse(localStorage.getItem('zootopia-pos') || 'null');
+    if (!p) return;
+    if (p.hero && p.hero !== player.current) { player.switchHero(); ui.setHero(player.current); }
+    player.setPosition(p.x, p.y, p.z, p.yaw); cam.focus.copy(player.pos); cam.yaw = p.yaw + Math.PI;
+    if (p.time != null) env.state.time = p.time;
+  } catch { /* */ }
+}
+// 每 20 秒自动记录位置
+setInterval(() => { if (started && player && !player.vehicle && insideName == null) try { localStorage.setItem('zootopia-pos', JSON.stringify({ x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, hero: player.current, time: env.state.time })); } catch { /* */ } }, 20000);
 
 // —— 暂停菜单 ——
 function openPause() {
@@ -197,12 +291,26 @@ function openPause() {
       <button class="btn ghost" data-a="time">${env.state.time > 6 && env.state.time < 18 ? '🌙 跳到夜晚' : '☀️ 跳到白天'}</button>
       <button class="btn ghost" data-a="zpd">🚓 回到 ZPD</button>
       <button class="btn ghost" data-a="cop">${cop.active ? '🕵️ 切回侦探模式' : '🚔 交警值班（T）'}</button>
+      <button class="btn ghost" data-a="music">${audio.musicOn ? '🎵 音乐：开' : '🔇 音乐：关'}</button>
+      <button class="btn ghost" data-a="sound">${audio.enabled ? '🔊 声音：开' : '🔈 声音：关'}</button>
+      <button class="btn ghost" data-a="quality">🖥 画质：${({ low: '低', mid: '中', high: '高' })[perf.level]}</button>
+      <button class="btn ghost" data-a="export">💾 导出存档</button>
+      <button class="btn ghost" data-a="import">📂 导入存档</button>
       <button class="btn ghost" data-a="reset">🗑 重置存档</button>
     </div>
-    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">${IS_TOUCH ? '左侧拖动摇杆移动 · 右侧滑动转视角 · 双指缩放<br>右下按钮：互动 / 跳跃 / 警车 / 侦探感知 / 切换角色<br>右上按钮：档案 · 地图 · 警笛 · 菜单' : ''}</p><p style="font-size:13px;opacity:.7;line-height:1.8" class="${IS_TOUCH ? 'hidden' : ''}">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图<br>空中再按 Space 展开滑翔伞 · T 交警值班模式</p>
+    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">${IS_TOUCH ? '左侧拖动摇杆移动 · 右侧滑动转视角 · 双指缩放<br>右下按钮：互动 / 跳跃 / 警车 / 侦探感知 / 切换角色<br>右上按钮：档案 · 地图 · 警笛 · 菜单' : ''}</p><p style="font-size:13px;opacity:.7;line-height:1.8" class="${IS_TOUCH ? 'hidden' : ''}">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图<br>G 竹蜻蜓飞行（Space 上升 / C 下降）· T 交警值班模式</p>
   </div>`, { onClose: () => { paused = false; } });
   m.querySelector('[data-a=resume]').onclick = () => ui.closeModal();
   m.querySelector('[data-a=time]').onclick = () => { env.state.time = env.state.time > 6 && env.state.time < 18 ? 20.5 : 9; ui.closeModal(); };
+  m.querySelector('[data-a=export]').onclick = () => exportSave();
+  m.querySelector('[data-a=quality]').onclick = e => {
+    const order = ['low', 'mid', 'high'], next = order[(order.indexOf(perf.level) + 1) % 3];
+    perf.setLevel(next); crowd.count = Math.round(55 * perf.q.crowd);
+    e.target.textContent = '🖥 画质：' + ({ low: '低', mid: '中', high: '高' })[next];
+  };
+  m.querySelector('[data-a=import]').onclick = () => importSave();
+  m.querySelector('[data-a=music]').onclick = e => { audio.setMusic(!audio.musicOn); e.target.textContent = audio.musicOn ? '🎵 音乐：开' : '🔇 音乐：关'; };
+  m.querySelector('[data-a=sound]').onclick = e => { audio.setEnabled(!audio.enabled); e.target.textContent = audio.enabled ? '🔊 声音：开' : '🔈 声音：关'; };
   m.querySelector('[data-a=cop]').onclick = () => { ui.closeModal(); cop.active ? cop.stop('提前下班') : cop.start(); };
   m.querySelector('[data-a=zpd]').onclick = () => { ui.closeModal(); if (player.vehicle) player.exitVehicle(); travelTo(LANDMARKS.zpd); };
   m.querySelector('[data-a=reset]').onclick = () => { if (confirm('确定要清除所有进度吗？')) detective.resetSave(); };
@@ -210,7 +318,7 @@ function openPause() {
 
 // —— 主循环 ——
 const clock = new THREE.Clock();
-let fpsAcc = 0, fpsN = 0, ambientT = 0;
+let fpsAcc = 0, fpsN = 0, ambientT = 0, stepAcc = 0, wasGround = true, insideName = null;
 const tmpV = new THREE.Vector3();
 
 function handleInput(dt) {
@@ -233,10 +341,10 @@ function handleInput(dt) {
     ui.toast(player.current === 'judy' ? '👂 敏锐听觉：附近的线索会更明显' : '😏 老江湖直觉：注意周围的可疑之处', 1800);
   }
   if (input.hit('KeyF')) {
-    if (player.vehicle) player.exitVehicle();
-    else { const v = nearestCruiser(player.pos); if (v) player.enterVehicle(v); }
+    if (player.vehicle) { player.exitVehicle(); audio.engine(false); audio.siren(false); audio.sfx('door'); }
+    else { const v = nearestCruiser(player.pos); if (v) { player.enterVehicle(v); audio.sfx('door'); if (v.siren) audio.siren(true); } }
   }
-  if (input.hit('KeyH') && player.vehicle) player.vehicle.siren = !player.vehicle.siren;
+  if (input.hit('KeyH') && player.vehicle) { player.vehicle.siren = !player.vehicle.siren; audio.siren(player.vehicle.siren); }
   if (input.hit('KeyT')) { if (cop.active) cop.stop('提前下班'); else cop.start(); }
   if (input.hit('KeyE') && cop.tryTicket()) return;
   if (input.hit('KeyE') && !player.vehicle) {
@@ -309,11 +417,12 @@ function loop() {
 
   if (started && !paused) {
     handleInput(dt);
+    player.wet = env.state.wet;
     player.update(dt, input, cam.yaw);
     if (!player.vehicle) traffic.pushOut(player.pos, player.stats.radius);
     cam.update(dt, input, player);
-    const dk = districtAt(player.pos.x, player.pos.z);
-    if (dk !== lastDistrict) {
+    const dk = insideName ? 'inside' : districtAt(player.pos.x, player.pos.z);
+    if (dk !== lastDistrict && dk !== 'inside') {
       const D = DISTRICTS[dk];
       if (D && lastDistrict !== null) ui.districtBanner(D.name, D.en.toUpperCase());
       lastDistrict = dk;
@@ -323,8 +432,23 @@ function loop() {
     detective.update(dt, t, player.pos);
     cop.update(dt, t);
     for (const v of cruisers) if (v !== player.vehicle) v.update(dt, 0);
-    env.update(dt, player.pos, dk);
+    perf.update(dt, player.pos);
+    env.state.interior = insideName;
+    env.update(dt, player.pos, dk, { cam: camera.position, siren: [...cruisers].find(v => v.siren)?.pos });
+    // 声音：脚步（按步频）、引擎、环境与音乐
+    if (player.vehicle) audio.engine(true, player.vehicle.speed);
+    if (!player.vehicle && player.onGround && !player.flying) {
+      const hs = Math.hypot(player.vel.x, player.vel.z);
+      stepAcc += hs * dt;
+      if (hs > 0.5 && stepAcc > (hs > 5 ? 1.25 : 0.8)) { stepAcc = 0; audio.sfx('step', { surface: dk === 'tundra' ? 'snow' : dk === 'sahara' ? 'sand' : dk === 'bunnyburrow' || dk === 'rainforest' ? 'grass' : 'hard' }); }
+      if (!wasGround) audio.sfx('land');
+    }
+    if (wasGround && !player.onGround && player.vel.y > 2 && !player.flying) audio.sfx('jump');
+    wasGround = player.onGround;
+    audio.update(dt, { district: dk, night: SharedUniforms.uNight.value, inside: insideName, weather: env.state.weather, copMode: cop.active });
     for (const f of animators) f(dt, t, player.pos);
+    // 防止卡在室内：位置离开室内区域时自动清除
+    if (insideName && !interiorAt(player.pos.x, player.pos.z)) { insideName = null; env.state.interior = null; }
 
     // 提示
     let prompt = null, act = null, car = false;
@@ -332,7 +456,7 @@ function loop() {
       const offV = player.vehicle && cop.nearest();
       if (offV) { prompt = `<kbd>E</kbd> 拦停开罚单：${offV.offense.icon} ${offV.offense.name}`; act = '罚单'; }
       else if (player.vehicle) prompt = IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
-      else if (player.gliding) prompt = IS_TOUCH ? '🪂 滑翔中 · 再按「跳」收伞' : '🪂 滑翔中 · <kbd>Space</kbd> 收伞 · <kbd>Shift</kbd> 俯冲';
+      else if (player.flying) prompt = IS_TOUCH ? '🚁 飞行中 · ⬆/⬇ 升降 · 🚁 降落' : '🚁 飞行中 · <kbd>Space</kbd> 上升 · <kbd>C</kbd> 下降 · <kbd>Shift</kbd> 加速 · <kbd>G</kbd> 降落';
       else {
         const it = interact.nearest(player.pos);
         car = !!nearestCruiser(player.pos);
@@ -345,12 +469,12 @@ function loop() {
     }
     if (IS_TOUCH && prompt) prompt = prompt.replace(/<kbd>[EF]<\/kbd> /, '');
     ui.prompt(prompt);
-    if (IS_TOUCH) ui.touchState({ act, car, driving: !!player.vehicle, hero: player.current });
+    if (IS_TOUCH) ui.touchState({ act, car, driving: !!player.vehicle, hero: player.current, flying: player.flying });
     ui.setStamina(player.stamina);
     ui.setClock(env.state.time);
     ui.setRep(detective.rep, detective.rank);
     const D = DISTRICTS[dk];
-    minimap.update(player.pos, player.yaw, cam.yaw, cop.active ? cop.nearestOffender() : detective.targetPos(player.pos), D ? D.name : dk === 'canal' ? '运河' : '郊外', [...cruisers.map(v => ({ x: v.pos.x, z: v.pos.z, color: '#4aa3ff', r: 5 })), ...cop.mapDots()]);
+    minimap.update(player.pos, player.yaw, cam.yaw, cop.active ? cop.nearestOffender() : detective.targetPos(player.pos), insideName || (D ? D.name : dk === 'canal' ? '运河' : '郊外'), [...cruisers.map(v => ({ x: v.pos.x, z: v.pos.z, color: '#4aa3ff', r: 5 })), ...cop.mapDots()]);
     updateMarkers();
   } else if (!started) {
     // 标题画面：环绕镜头
@@ -368,4 +492,4 @@ function loop() {
 init().catch(e => { console.error(e); setLoad('加载失败：' + e.message, 1); });
 
 // 调试接口
-window.__zoo = { get cop() { return cop; }, get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };
+window.__zoo = { audio, perf, get cop() { return cop; }, get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };
