@@ -58,15 +58,11 @@ export class Player {
   update(dt, input, camYaw) {
     if (this.vehicle) return this._updateVehicle(dt, input, camYaw);
     const S = this.stats;
-    let mx = 0, mz = 0;
-    if (!this.frozen) {
-      if (input.down('KeyW') || input.down('ArrowUp')) mz -= 1;
-      if (input.down('KeyS') || input.down('ArrowDown')) mz += 1;
-      if (input.down('KeyA') || input.down('ArrowLeft')) mx -= 1;
-      if (input.down('KeyD') || input.down('ArrowRight')) mx += 1;
-    }
-    const moving = mx || mz;
-    const sprint = input.down('ShiftLeft') || input.down('ShiftRight');
+    const mv = this.frozen ? { x: 0, y: 0, mag: 0 } : input.move();
+    let mx = mv.x, mz = mv.y;
+    const moving = mv.mag > 0.12;
+    // 摇杆推到底自动奔跑；轻推慢走
+    const sprint = input.down('ShiftLeft') || input.down('ShiftRight') || mv.mag > 0.92 && input.touch;
     let speed = 0;
     if (moving) {
       const l = Math.hypot(mx, mz); mx /= l; mz /= l;
@@ -74,7 +70,7 @@ export class Player {
       const s = Math.sin(camYaw), c = Math.cos(camYaw);
       const wx = mx * c + mz * s, wz = -mx * s + mz * c;
       const canRun = sprint && this.stamina > 0.05;
-      speed = canRun ? S.run : S.walk;
+      speed = canRun ? S.run : S.walk * (input.touch ? Math.min(1, 0.35 + mv.mag) : 1);
       if (canRun) this.stamina = Math.max(0, this.stamina - dt * 0.12);
       const targetYaw = Math.atan2(wx, wz);
       let d = targetYaw - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -160,10 +156,9 @@ export class Player {
     const v = this.vehicle;
     let th = 0, st = 0;
     if (!this.frozen) {
-      if (input.down('KeyW') || input.down('ArrowUp')) th += 1;
-      if (input.down('KeyS') || input.down('ArrowDown')) th -= 1;
-      if (input.down('KeyA') || input.down('ArrowLeft')) st += 1;
-      if (input.down('KeyD') || input.down('ArrowRight')) st -= 1;
+      const mv = input.move();
+      if (Math.abs(mv.y) > 0.2) th = -Math.sign(mv.y);
+      if (Math.abs(mv.x) > 0.15) st = -Math.max(-1, Math.min(1, mv.x));
     }
     const boost = input.down('ShiftLeft') ? 1.5 : 1;
     const maxF = 26 * boost, maxB = -8;

@@ -29,11 +29,24 @@ export class UI {
           <kbd>J</kbd> 侦探档案 · <kbd>M</kbd> 地图/快速出行 · <kbd>Esc</kbd> 菜单
         </div>
         <div id="fps"></div>
+        <div id="touchBtns">
+          <button class="tb big" id="tbAct" data-k="KeyE">E</button>
+          <button class="tb" data-k="Space" data-hold="1">跳</button>
+          <button class="tb" data-k="KeyF" id="tbCar">🚓</button>
+          <button class="tb" data-k="KeyQ">🔍</button>
+          <button class="tb" data-k="Tab" id="tbSwap">🦊</button>
+        </div>
+        <div id="touchTop">
+          <button class="tb sm" data-k="KeyJ">📒</button>
+          <button class="tb sm" data-k="KeyM">🗺️</button>
+          <button class="tb sm" data-k="KeyH" id="tbSiren">🚨</button>
+          <button class="tb sm" data-k="Escape">⏸</button>
+        </div>
       </div>
       <div id="district"><div class="n"></div><div class="e"></div></div>
       <div id="toast"></div>
       <div id="markers"></div>
-      <div id="dialog" class="hidden"><div class="box"><div class="who"></div><div class="text"></div><div class="choices"></div><div class="next">点击 / 空格 继续 ▼</div></div></div>
+      <div id="dialog" class="hidden"><div class="box"><div class="who"></div><div class="text"></div><div class="choices"></div><div class="next">点击继续 ▼</div></div></div>
       <div id="modal" class="modal hidden"></div>
     `;
     this.dialogEl = $('#dialog');
@@ -48,6 +61,31 @@ export class UI {
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 9 && this._dlg.choiceBtns) this._dlg.choiceBtns[n - 1]?.click();
     });
+  }
+
+  // 触屏按钮 → 虚拟按键
+  bindTouch(input) {
+    document.body.classList.toggle('touch', input.touch);
+    if (!input.touch) return;
+    $('#heroChip small').textContent = '点击切换';
+    $('#heroChip').addEventListener('click', () => input.tap('Tab'));
+    for (const b of this.root.querySelectorAll('.tb')) {
+      const k = b.dataset.k;
+      b.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); b.classList.add('down'); input.press(k); }, { passive: false });
+      const up = e => { e.preventDefault(); b.classList.remove('down'); input.release(k); };
+      b.addEventListener('touchend', up); b.addEventListener('touchcancel', up);
+    }
+  }
+  // 根据上下文更新触屏按钮：act = 主互动按钮文字（null 隐藏），car = 是否显示上/下车，driving
+  touchState({ act, car, driving, hero }) {
+    const a = $('#tbAct');
+    if (!a) return;
+    a.style.display = act ? '' : 'none';
+    if (act && a._t !== act) { a.textContent = act; a._t = act; }
+    $('#tbCar').style.display = car || driving ? '' : 'none';
+    $('#tbCar').textContent = driving ? '下车' : '🚓';
+    $('#tbSiren').style.display = driving ? '' : 'none';
+    $('#tbSwap').textContent = hero === 'judy' ? '🦊' : '🐰';
   }
 
   show(id, on = true) { $('#' + id).classList.toggle('hidden', !on); }

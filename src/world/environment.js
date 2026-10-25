@@ -1,6 +1,7 @@
 // 环境：天空、太阳、昼夜循环、全局地面、运河水面、远山、连接公路
 import * as THREE from 'three';
 import { SharedUniforms } from '../core/builder.js';
+import { IS_TOUCH } from '../core/input.js';
 import { WORLD_SIZE, WATER, CONNECTORS, ROAD_W, DISTRICTS } from './layout.js';
 
 export function createEnvironment(scene, renderer, b) {
@@ -58,7 +59,7 @@ export function createEnvironment(scene, renderer, b) {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.setScalar(IS_TOUCH ? 1024 : 2048);
   const S = 90;
   Object.assign(sun.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: 900 });
   sun.shadow.bias = -0.0004;

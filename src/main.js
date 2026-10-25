@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Builder, SharedUniforms, rng } from './core/builder.js';
 import { Colliders } from './core/collision.js';
 import * as tex from './core/tex.js';
-import { Input } from './core/input.js';
+import { Input, IS_TOUCH } from './core/input.js';
 import * as layout from './world/layout.js';
 import { createEnvironment } from './world/environment.js';
 import { Player, ThirdPersonCamera } from './game/player.js';
@@ -21,18 +21,20 @@ const districtModules = import.meta.glob('./world/districts/*.js');
 // —— 渲染器 ——
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+// 触屏设备（iPad/手机）GPU 较弱且像素密度高：降低渲染分辨率、关软阴影
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH ? 1.25 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 6000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, IS_TOUCH ? 2200 : 6000);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
 const ui = new UI();
 const input = new Input(canvas);
+ui.bindTouch(input);
 const col = new Colliders();
 const interact = new Interactions();
 const animators = [];
@@ -50,7 +52,7 @@ title.innerHTML = `
   </div>
   <div class="loading">正在建造动物城…</div>
   <div class="bar"><i></i></div>
-  <div class="keys">两位警官会一起行动，随时按 <kbd>Tab</kbd> 切换操控。<br>不同的角色能发现不同的线索、问出不同的证词。</div>`;
+  <div class="keys">${IS_TOUCH ? '左手拖动摇杆移动（推到底奔跑），右手滑动转视角，双指捏合缩放。<br>两位警官会一起行动，点击左上角头像切换操控。' : '两位警官会一起行动，随时按 <kbd>Tab</kbd> 切换操控。<br>不同的角色能发现不同的线索、问出不同的证词。'}</div>`;
 document.body.appendChild(title);
 const setLoad = (t, p) => { title.querySelector('.loading').textContent = t; title.querySelector('.bar i').style.width = (p * 100) + '%'; };
 
@@ -153,8 +155,8 @@ async function init() {
   cam.focus.copy(player.pos);
   cam.yaw = player.yaw + Math.PI;
   makeCruisers();
-  traffic = new Traffic(scene, 80);
-  crowd = new Crowd(scene, col, 55);
+  traffic = new Traffic(scene, IS_TOUCH ? 40 : 80);
+  crowd = new Crowd(scene, col, IS_TOUCH ? 28 : 55);
   detective = new Detective({ scene, col, ui, player, interact });
   minimap = new Minimap(ui, travelTo);
   setLoad('选择你的角色', 1);
@@ -177,7 +179,7 @@ function openPause() {
       <button class="btn ghost" data-a="zpd">🚓 回到 ZPD</button>
       <button class="btn ghost" data-a="reset">🗑 重置存档</button>
     </div>
-    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图</p>
+    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">${IS_TOUCH ? '左侧拖动摇杆移动 · 右侧滑动转视角 · 双指缩放<br>右下按钮：互动 / 跳跃 / 警车 / 侦探感知 / 切换角色<br>右上按钮：档案 · 地图 · 警笛 · 菜单' : ''}</p><p style="font-size:13px;opacity:.7;line-height:1.8" class="${IS_TOUCH ? 'hidden' : ''}">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图</p>
   </div>`, { onClose: () => { paused = false; } });
   m.querySelector('[data-a=resume]').onclick = () => ui.closeModal();
   m.querySelector('[data-a=time]').onclick = () => { env.state.time = env.state.time > 6 && env.state.time < 18 ? 20.5 : 9; ui.closeModal(); };
@@ -301,17 +303,20 @@ function loop() {
     for (const f of animators) f(dt, t, player.pos);
 
     // 提示
-    let prompt = null;
+    let prompt = null, act = null, car = false;
     if (!ui.inDialog && !ui.modalOpen) {
-      if (player.vehicle) prompt = `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
+      if (player.vehicle) prompt = IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
       else {
         const it = interact.nearest(player.pos);
-        if (it) prompt = `<kbd>E</kbd> ${esc(it.label)}`;
-        else if (nearestCruiser(player.pos)) prompt = `<kbd>F</kbd> 驾驶 ZPD 警车`;
-        else if (crowd.nearest(player.pos)) prompt = `<kbd>E</kbd> 打个招呼`;
+        car = !!nearestCruiser(player.pos);
+        if (it) { prompt = `<kbd>E</kbd> ${esc(it.label)}`; act = it.label.startsWith('调查') ? '调查' : '对话'; }
+        else if (car) prompt = `<kbd>F</kbd> 驾驶 ZPD 警车`;
+        else if (crowd.nearest(player.pos)) { prompt = `<kbd>E</kbd> 打个招呼`; act = '招呼'; }
       }
     }
+    if (IS_TOUCH && prompt) prompt = prompt.replace(/<kbd>[EF]<\/kbd> /, '');
     ui.prompt(prompt);
+    if (IS_TOUCH) ui.touchState({ act, car, driving: !!player.vehicle, hero: player.current });
     ui.setStamina(player.stamina);
     ui.setClock(env.state.time);
     ui.setRep(detective.rep, detective.rank);
