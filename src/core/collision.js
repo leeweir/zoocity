@@ -17,6 +17,7 @@ export class Colliders {
   }
 
   _insert(c, x0, z0, x1, z1) {
+    if (this.reject && c.type !== 'slab' && c.type !== 'ramp' && this.reject(x0, z0, x1, z1, c.yMax)) return c;
     const i0 = Math.floor(x0 / CELL), i1 = Math.floor(x1 / CELL);
     const j0 = Math.floor(z0 / CELL), j1 = Math.floor(z1 / CELL);
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
@@ -42,6 +43,16 @@ export class Colliders {
     return this._insert(c, cx - r, cz - r, cx + r, cz + r);
   }
 
+  // 任意方向的坡道/桥面：以线段 (x0,z0,h0)-(x1,z1,h1) 为中线、宽 w 的可站立面。
+  // 用于曲线高架桥与匝道。只提供地面高度，不做侧向阻挡（护栏另加 box）。
+  slab(x0, z0, h0, x1, z1, h1, w) {
+    const dx = x1 - x0, dz = z1 - z0;
+    const len2 = dx * dx + dz * dz || 1e-6;
+    const c = { type: 'slab', x0, z0, h0, x1, z1, h1, hw: w / 2, dx, dz, len2 };
+    const ex = Math.abs(dx) + w, ez = Math.abs(dz) + w;
+    return this._insert(c, Math.min(x0, x1) - w, Math.min(z0, z1) - w, Math.max(x0, x1) + w, Math.max(z0, z1) + w);
+  }
+
   ramp(x0, z0, x1, z1, h0, h1, axis = 'z') {
     const c = { type: 'ramp', x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1), h0, h1, axis, rx0: x0, rz0: z0, rx1: x1, rz1: z1 };
     return this._insert(c, c.x0, c.z0, c.x1, c.z1);
@@ -64,6 +75,14 @@ export class Colliders {
     for (const c of this._near(x, z)) {
       let top = null;
       if (c.type === 'ramp') top = this._rampH(c, x, z);
+      else if (c.type === 'slab') {
+        const t = ((x - c.x0) * c.dx + (z - c.z0) * c.dz) / c.len2;
+        if (t >= -0.02 && t <= 1.02) {
+          const px = c.x0 + c.dx * t, pz = c.z0 + c.dz * t;
+          const d2 = (x - px) ** 2 + (z - pz) ** 2;
+          if (d2 <= c.hw * c.hw) top = c.h0 + (c.h1 - c.h0) * Math.max(0, Math.min(1, t));
+        }
+      }
       else if (c.walkable) {
         if (c.type === 'box') {
           const dx = x - c.cx, dz = z - c.cz;
@@ -82,7 +101,7 @@ export class Colliders {
     for (let iter = 0; iter < 2; iter++) {
       for (const [ox, oz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
         for (const c of this._near(pos.x + ox, pos.z + oz)) {
-          if (c.type === 'ramp' || (iter === 0 && seen.has(c))) continue;
+          if (c.type === 'ramp' || c.type === 'slab' || (iter === 0 && seen.has(c))) continue;
           seen.add(c);
           // 高度不重叠则忽略（在上面或下面）
           if (pos.y + height < c.yMin || pos.y >= c.yMax - (c.walkable ? stepUp : 0.001)) continue;
@@ -112,7 +131,7 @@ export class Colliders {
   // 点 (x,y,z) 是否在某个实体内部（相机防穿墙用）
   pointInside(x, y, z) {
     for (const c of this._near(x, z)) {
-      if (c.type === 'ramp' || y < c.yMin || y > c.yMax) continue;
+      if (c.type === 'ramp' || c.type === 'slab' || y < c.yMin || y > c.yMax) continue;
       if (c.type === 'circle') { if ((x - c.cx) ** 2 + (z - c.cz) ** 2 < c.r * c.r) return true; }
       else {
         const dx = x - c.cx, dz = z - c.cz;

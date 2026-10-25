@@ -138,6 +138,7 @@ export class Builder {
     this.receiveShadow = receiveShadow;
     this.buckets = new Map();
     this.meshes = [];
+    this.reject = null;   // (x0,z0,x1,z1,top) => bool：为 true 时丢弃该几何体（弧形大道走廊让路）
   }
 
   _matrix(x, y, z, sx, sy, sz, o) {
@@ -162,6 +163,7 @@ export class Builder {
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.computeBoundingBox();
     const bb = g.boundingBox;
+    if (this.reject && !o.keep && this.reject(bb.min.x, bb.min.z, bb.max.x, bb.max.z, bb.max.y)) { g.dispose(); return this; }
     const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
     const mat = o.mat || 'solid';
     const shadow = o.shadow === false ? 'n' : 's';

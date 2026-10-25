@@ -6,6 +6,8 @@ import * as tex from './core/tex.js';
 import { Input, IS_TOUCH } from './core/input.js';
 import * as layout from './world/layout.js';
 import { createEnvironment } from './world/environment.js';
+import { buildHighway } from './world/highway.js';
+import { buildCurves, shouldReject } from './world/curves.js';
 import { Player, ThirdPersonCamera } from './game/player.js';
 import { Vehicle, Traffic, createCarModel } from './game/vehicles.js';
 import { Crowd, ambientLine, iconOf } from './game/npcs.js';
@@ -69,6 +71,8 @@ const POIS = {};
 async function buildWorld() {
   const keys = Object.keys(districtModules).sort();
   let i = 0;
+  // 弧形大道走廊：各地区建造时，压在走廊上的楼房/道具自动让路
+  b.reject = shouldReject; col.reject = shouldReject;
   for (const k of keys) {
     const name = k.split('/').pop().replace('.js', '');
     setLoad(`正在建造 ${DISTRICTS[name]?.name || name}…`, (i + 0.2) / (keys.length + 1));
@@ -84,7 +88,12 @@ async function buildWorld() {
     }
     i++;
   }
-  setLoad('正在合并网格…', keys.length / (keys.length + 1));
+  b.reject = null; col.reject = null;
+  setLoad('正在铺设弧形大道…', keys.length / (keys.length + 1.4));
+  try { buildCurves(ctx); } catch (e) { console.error('[world] 弧形大道建造失败', e); }
+  setLoad('正在架设环城高架…', keys.length / (keys.length + 1.4));
+  try { buildHighway(ctx); } catch (e) { console.error('[world] 高架建造失败', e); }
+  setLoad('正在合并网格…', (keys.length + 0.6) / (keys.length + 1.4));
   await new Promise(r => setTimeout(r, 16));
   b.flush();
   let tris = 0; scene.traverse(o => { if (o.isMesh && o.geometry.index) tris += o.geometry.index.count / 3; });
@@ -156,6 +165,8 @@ async function init() {
   cam.yaw = player.yaw + Math.PI;
   makeCruisers();
   traffic = new Traffic(scene, IS_TOUCH ? 40 : 80);
+  traffic.addLoopCars(IS_TOUCH ? 14 : 26);
+  traffic.addCurveCars(IS_TOUCH ? 2 : 4);
   crowd = new Crowd(scene, col, IS_TOUCH ? 28 : 55);
   detective = new Detective({ scene, col, ui, player, interact });
   minimap = new Minimap(ui, travelTo);
@@ -339,4 +350,4 @@ function loop() {
 init().catch(e => { console.error(e); setLoad('加载失败：' + e.message, 1); });
 
 // 调试接口
-window.__zoo = { get player() { return player; }, get detective() { return detective; }, env, scene, col, renderer, travelTo, LANDMARKS };
+window.__zoo = { get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };

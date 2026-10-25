@@ -1,5 +1,7 @@
 // 小地图 + 全屏地图（点击地标快速出行）
 import { DISTRICTS, LANDMARKS, WATER, BRIDGE, ROAD_W, CONNECTORS, WORLD_SIZE } from '../world/layout.js';
+import { LOOP } from '../world/highway.js';
+import { CURVES } from '../world/curves.js';
 
 const HALF = WORLD_SIZE / 2;
 
@@ -13,7 +15,8 @@ function drawWorld(g, size) {
     g.fillStyle = D.color; g.globalAlpha = key === 'rodentia' ? 0.9 : 0.55;
     g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
     g.globalAlpha = 1;
-    g.strokeStyle = 'rgba(40,40,40,.85)'; g.lineWidth = Math.max(1, ROAD_W * k);
+    g.strokeStyle = 'rgba(40,40,40,.85)'; g.lineWidth = Math.max(1, ROAD_W * k * 0.9);
+    g.lineCap = 'round'; g.lineJoin = 'round';
     g.beginPath();
     for (const x of D.roadsX) { g.moveTo(X(x), Z(r.z0)); g.lineTo(X(x), Z(r.z1)); }
     for (const z of D.roadsZ) { g.moveTo(X(r.x0), Z(z)); g.lineTo(X(r.x1), Z(z)); }
@@ -21,7 +24,23 @@ function drawWorld(g, size) {
   }
   g.beginPath();
   for (const c of CONNECTORS) { g.moveTo(X(c.x1), Z(c.z1)); g.lineTo(X(c.x2), Z(c.z2)); }
-  g.strokeStyle = '#d9c27a'; g.lineWidth = Math.max(1.5, ROAD_W * k); g.stroke();
+  g.strokeStyle = '#d9c27a'; g.lineWidth = Math.max(1.5, ROAD_W * k); g.lineCap = 'round'; g.stroke();
+  // 弧形大道
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const c of CURVES) {
+    g.beginPath();
+    c.pts.forEach(([x, z], i) => i ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)));
+    g.strokeStyle = 'rgba(30,30,30,.9)'; g.lineWidth = Math.max(2, 24 * k); g.stroke();
+    g.strokeStyle = '#f4f0e2'; g.lineWidth = Math.max(1, 15 * k); g.stroke();
+  }
+  // 环城高架（亮色双线，带描边，读起来像城市快速路）
+  if (LOOP.length) {
+    g.beginPath();
+    LOOP.forEach((p, i) => { const x = X(p.x), z = Z(p.z); i ? g.lineTo(x, z) : g.moveTo(x, z); });
+    g.closePath();
+    g.strokeStyle = 'rgba(20,24,34,.9)'; g.lineWidth = Math.max(3, 26 * k); g.stroke();
+    g.strokeStyle = '#ffb347'; g.lineWidth = Math.max(1.6, 13 * k); g.stroke();
+  }
   g.fillStyle = '#a89f8f'; g.fillRect(X(BRIDGE.x - BRIDGE.w / 2), Z(BRIDGE.z0), BRIDGE.w * k, (BRIDGE.z1 - BRIDGE.z0) * k);
 }
 
@@ -35,8 +54,22 @@ export class Minimap {
     drawWorld(this.base.getContext('2d'), 2048);
     this.onTravel = onTravel;
     this.big = null;
+    // 点击/轻触小地图 → 打开全屏地图
+    const box = document.querySelector('#minimap');
+    box.title = '点击打开地图（M）';
+    // 触屏上 touchend 之后浏览器还会补发一次 click，用时间戳去重
+    let last = 0;
+    const fire = e => { e.preventDefault(); e.stopPropagation(); const now = performance.now(); if (now - last < 600) return; last = now; this.toggleBig(); };
+    box.addEventListener('click', fire);
+    box.addEventListener('touchend', fire, { passive: false });
+  }
+
+  toggleBig() {
+    if (this.big) return this.closeBig();
+    if (this.peekPos) this.openBig(this.peekPos, this.peekTarget);
   }
   update(pos, yaw, camYaw, target, districtName, extra = []) {
+    this.peekPos = pos; this.peekTarget = target;
     const g = this.g, S = this.cv.width;
     const scale = 2048 / WORLD_SIZE; // 基图像素/米
     const view = 260; // 小地图显示半径（米）
@@ -85,6 +118,15 @@ export class Minimap {
     const g = cv.getContext('2d'); const S = 1400, k = S / WORLD_SIZE;
     g.drawImage(this.base, 0, 0, S, S);
     const P = (x, z) => [(x + HALF) * k, (z + HALF) * k];
+    // 高架标注
+    if (LOOP.length && !this._loopDrawn) {
+      g.beginPath();
+      LOOP.forEach((p, i) => { const [x, z] = P(p.x, p.z); i ? g.lineTo(x, z) : g.moveTo(x, z); });
+      g.closePath(); g.strokeStyle = '#ffb347'; g.lineWidth = 5; g.stroke();
+      g.font = 'bold 20px "PingFang SC",sans-serif'; g.fillStyle = '#ffb347';
+      g.fillText('环城高架 · 城市快速路', S / 2, P(0, -322)[1] - 12);
+      this._loopDrawn = true;
+    }
     g.textAlign = 'center';
     for (const D of Object.values(DISTRICTS)) {
       if (D.name === '小型啮齿镇') continue;
@@ -112,5 +154,5 @@ export class Minimap {
     };
     this.big = wrap;
   }
-  closeBig() { this.big?.remove(); this.big = null; }
+  closeBig() { this.big?.remove(); this.big = null; this.onClose?.(); }
 }
