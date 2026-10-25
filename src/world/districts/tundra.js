@@ -276,7 +276,7 @@ export function build(ctx) {
     }
     let h, roofTop;
     if (t < 0.5) { // 洋葱顶楼
-      h = rr(14, 60);
+      h = rr(10, 22) + (rnd() < 0.15 ? rr(10, 18) : 0);   // 冰川镇以 3–6 层俄式街屋为主
       const mat = h > 34 ? 'facadeBig' : 'facade';
       b.box(w, h, d, cx, 0, cz, color, { mat });
       b.box(w + 0.8, 0.8, d + 0.8, cx, h, cz, 0xefe3c4);

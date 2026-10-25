@@ -117,9 +117,9 @@ function fastPrims(b) {
 }
 
 const pick = (r, a) => a[Math.floor(r() * a.length) % a.length];
-const FACADE_C = [0xe8d8b8, 0xd9c4a0, 0xc9b79c, 0xe6cfa8, 0xbfa58a, 0xd8b98e, 0xcfc6b8, 0xe2d5c3, 0xb8a48c, 0xd4bfa6, 0xc2b2a0, 0xe9e0cf, 0xa98f78, 0xd6a77a];
+const FACADE_C = [0xe8c99a, 0xf0b98a, 0xe89f7a, 0xd98c6a, 0xf2d6a2, 0xbfd8c2, 0x9cc9c0, 0xf3e3c3, 0xe7b0a0, 0xd7c08a, 0xc9a27a, 0xf1cfa0, 0xa8c8d8, 0xe6a66e];
 const BIG_C = [0xb9a68e, 0xc8b496, 0xa8977f, 0x9e9a8f, 0xc7b8a3, 0xb3a089];
-const GLASS_C = [0x6f9fc8, 0x5c8fb8, 0x7fb3c9, 0x4f7f9f, 0x8fb8d8, 0x6aa7a3, 0xa9c2d6, 0xc9a86a];
+const GLASS_C = [0x7fb7d8, 0x8fc4d8, 0x9fd0c8, 0x6fa8c0, 0xb5d4e0, 0x8ac0b4, 0xd9b77a, 0xc8a0c8];
 const AWN_C = [0xd9534f, 0x2e8b57, 0x2a6fb5, 0xf0ad4e, 0x8e44ad, 0xe67e22, 0x16a085, 0xc0392b, 0x34495e];
 const SIGN_C = [0xffd166, 0xff7aa2, 0x7ae7ff, 0x9dff8a, 0xffffff, 0xffa94d, 0xc9a0ff];
 const BILLBOARDS = [
@@ -144,6 +144,7 @@ function flipGeo(geo) {
   return g;
 }
 
+function shade(hex, k) { const c = new THREE.Color(hex); c.multiplyScalar(k); return c.getHex(); }
 function distRect(px, pz, x0, z0, x1, z1) {
   const dx = Math.max(x0 - px, 0, px - x1), dz = Math.max(z0 - pz, 0, pz - z1);
   return Math.hypot(dx, dz);
@@ -835,13 +836,16 @@ export function build(ctx) {
     const w = x1 - x0, d = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
     const k = r();
     let type, H;
+    // 参考电影：市中心（广场一圈）是少量标志性高塔，往外迅速降为 3–8 层的暖色街屋；
+    // 长颈鹿细高塔只在中心环零星出现，整片城区以中低层、圆角、暖色为主。
     const near = Math.hypot(cx, cz);
-    const hBias = Math.max(0, 1 - near / 300); // 越靠近市中心越高
-    if (k < 0.18 && w > 10 && d > 10) { type = 'giraffe'; H = 70 + r() * 50; }
-    else if (k < 0.42 && w > 18 && d > 14) { type = 'big'; H = 14 + r() * 26; }
-    else if (k < 0.65) { type = 'glass'; H = 30 + r() * 60 * (0.4 + hBias); }
-    else { type = 'facade'; H = 8 + r() * 30 * (0.5 + hBias); }
-    H = Math.min(120, H);
+    const core = Math.max(0, 1 - near / 170);          // 0..1：越靠近中心越大
+    const ring = near > 90 && near < 200;               // 次中心环
+    if (core > 0.25 && k < 0.1 && w > 10 && d > 10) { type = 'giraffe'; H = 55 + r() * 35; }
+    else if (core > 0.15 && k < 0.32) { type = 'glass'; H = 26 + r() * 40 * core; }
+    else if (w > 18 && d > 14 && k < 0.5) { type = 'big'; H = 10 + r() * (ring ? 16 : 10); }
+    else { type = 'facade'; H = 8 + r() * (ring ? 18 : 10); }
+    H = Math.min(95, H);
     let top;
     if (type === 'giraffe') {
       // 长颈鹿细高塔：底座 + 细长塔身 + 顶冠
@@ -876,7 +880,21 @@ export function build(ctx) {
         if (podium || t > 0) col.box(cx, cz, tw, td, { yMax: SW + y + hseg + 0.5 });
         y += hseg; tw *= 0.78; td *= 0.78;
       }
-      roof(cx, cz, tw / 0.78, td / 0.78, SW + y + 0.5); top = y;
+      if (tiers === 1 && H < 22 && r() < 0.55) {
+        // 坡屋顶 + 老虎窗：街屋感
+        const rc = pick(r, [0xb5523b, 0x7a4a3a, 0x3f6f6a, 0x8a5a3a, 0x5a6f8a]);
+        const ridge = Math.min(w, d) * 0.32;
+        const alongX = w > d;
+        b.box(alongX ? w + 0.8 : d * 0.75, ridge * 0.9, alongX ? d * 0.75 : d + 0.8, cx, SW + y + 0.5, cz, rc, { rx: alongX ? 0 : 0, mat: 'solid' });
+        b.box(alongX ? w + 1.0 : 0.6, ridge * 0.35, alongX ? 0.6 : d + 1.0, cx, SW + y + 0.5 + ridge * 0.85, cz, shade(rc, 0.8));
+        for (let k2 = -1; k2 <= 1; k2 += 2) b.box(2.2, 1.8, 1.4, cx + (alongX ? k2 * w * 0.22 : (d * 0.36)), SW + y + 0.6, cz + (alongX ? d * 0.36 : k2 * d * 0.22), 0xf3e3c3, { mat: 'facade' });
+      } else roof(cx, cz, tw / 0.78, td / 0.78, SW + y + 0.5);
+      // 每层阳台条（立面层次）
+      if (type === 'facade' && H < 30) for (let yy = 8; yy < H - 2; yy += 7.2) {
+        if (faces.S) b.box(w * 0.86, 0.25, 1.2, cx, SW + yy, z1 + 0.5, 0xf6ecd8);
+        if (faces.N) b.box(w * 0.86, 0.25, 1.2, cx, SW + yy, z0 - 0.5, 0xf6ecd8);
+      }
+      top = y;
     }
     // 底商（面向道路的立面）
     if (top >= 6) {

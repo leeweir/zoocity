@@ -8,11 +8,13 @@ import * as layout from './world/layout.js';
 import { createEnvironment } from './world/environment.js';
 import { buildHighway } from './world/highway.js';
 import { buildCurves, shouldReject } from './world/curves.js';
+import { buildFrontage, frontageReject } from './world/frontage.js';
 import { Player, ThirdPersonCamera } from './game/player.js';
 import { Vehicle, Traffic, createCarModel } from './game/vehicles.js';
 import { Crowd, ambientLine, iconOf } from './game/npcs.js';
 import { Interactions } from './game/interact.js';
 import { Detective } from './game/detective.js';
+import { TrafficCop } from './game/traffic_cop.js';
 import { UI, esc } from './ui/ui.js';
 import { Minimap } from './ui/minimap.js';
 import { createJudy, createNick } from './chars/heroes.js';
@@ -72,7 +74,8 @@ async function buildWorld() {
   const keys = Object.keys(districtModules).sort();
   let i = 0;
   // 弧形大道走廊：各地区建造时，压在走廊上的楼房/道具自动让路
-  b.reject = shouldReject; col.reject = shouldReject;
+  const reject = (x0, z0, x1, z1, top) => shouldReject(x0, z0, x1, z1, top) || frontageReject(x0, z0, x1, z1, top);
+  b.reject = reject; col.reject = reject;
   for (const k of keys) {
     const name = k.split('/').pop().replace('.js', '');
     setLoad(`正在建造 ${DISTRICTS[name]?.name || name}…`, (i + 0.2) / (keys.length + 1));
@@ -91,6 +94,7 @@ async function buildWorld() {
   b.reject = null; col.reject = null;
   setLoad('正在铺设弧形大道…', keys.length / (keys.length + 1.4));
   try { buildCurves(ctx); } catch (e) { console.error('[world] 弧形大道建造失败', e); }
+  try { buildFrontage(ctx); } catch (e) { console.error('[world] 辅路建造失败', e); }
   setLoad('正在架设环城高架…', keys.length / (keys.length + 1.4));
   try { buildHighway(ctx); } catch (e) { console.error('[world] 高架建造失败', e); }
   setLoad('正在合并网格…', (keys.length + 0.6) / (keys.length + 1.4));
@@ -101,7 +105,7 @@ async function buildWorld() {
 }
 
 // —— 游戏对象 ——
-let player, cam, detective, traffic, crowd, minimap, cruisers = [];
+let player, cam, detective, traffic, crowd, minimap, cop, cruisers = [];
 let started = false, paused = false;
 let lastDistrict = null;
 
@@ -169,6 +173,10 @@ async function init() {
   traffic.addCurveCars(IS_TOUCH ? 2 : 4);
   crowd = new Crowd(scene, col, IS_TOUCH ? 28 : 55);
   detective = new Detective({ scene, col, ui, player, interact });
+  cop = new TrafficCop({ scene, ui, traffic, player, crowd });
+  detective.onTrafficDuty = () => cop.start();
+  // 上升气流：撒哈拉排气塔、冰川造雪塔、雨林喷淋塔附近能爬升
+  player.updraft = p => (p.x > 325 && p.x < 350) || (p.z > -350 && p.z < -325 && p.x > -700 && p.x < 300) || (Math.hypot(p.x + 660, p.z + 80) < 30);
   minimap = new Minimap(ui, travelTo);
   setLoad('选择你的角色', 1);
   const pick = title.querySelector('.pick');
@@ -188,12 +196,14 @@ function openPause() {
       <button class="btn" data-a="resume">继续</button>
       <button class="btn ghost" data-a="time">${env.state.time > 6 && env.state.time < 18 ? '🌙 跳到夜晚' : '☀️ 跳到白天'}</button>
       <button class="btn ghost" data-a="zpd">🚓 回到 ZPD</button>
+      <button class="btn ghost" data-a="cop">${cop.active ? '🕵️ 切回侦探模式' : '🚔 交警值班（T）'}</button>
       <button class="btn ghost" data-a="reset">🗑 重置存档</button>
     </div>
-    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">${IS_TOUCH ? '左侧拖动摇杆移动 · 右侧滑动转视角 · 双指缩放<br>右下按钮：互动 / 跳跃 / 警车 / 侦探感知 / 切换角色<br>右上按钮：档案 · 地图 · 警笛 · 菜单' : ''}</p><p style="font-size:13px;opacity:.7;line-height:1.8" class="${IS_TOUCH ? 'hidden' : ''}">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图</p>
+    <p style="font-size:13px;opacity:.7;margin-top:18px;line-height:1.8">${IS_TOUCH ? '左侧拖动摇杆移动 · 右侧滑动转视角 · 双指缩放<br>右下按钮：互动 / 跳跃 / 警车 / 侦探感知 / 切换角色<br>右上按钮：档案 · 地图 · 警笛 · 菜单' : ''}</p><p style="font-size:13px;opacity:.7;line-height:1.8" class="${IS_TOUCH ? 'hidden' : ''}">鼠标：点击画面锁定视角，或按住右键拖动 · 滚轮缩放<br>WASD 移动 · Shift 奔跑 · Space 跳跃 · E 互动 · Q 侦探感知<br>Tab 切换朱迪/尼克 · F 上下警车 · H 警笛 · J 档案 · M 地图<br>空中再按 Space 展开滑翔伞 · T 交警值班模式</p>
   </div>`, { onClose: () => { paused = false; } });
   m.querySelector('[data-a=resume]').onclick = () => ui.closeModal();
   m.querySelector('[data-a=time]').onclick = () => { env.state.time = env.state.time > 6 && env.state.time < 18 ? 20.5 : 9; ui.closeModal(); };
+  m.querySelector('[data-a=cop]').onclick = () => { ui.closeModal(); cop.active ? cop.stop('提前下班') : cop.start(); };
   m.querySelector('[data-a=zpd]').onclick = () => { ui.closeModal(); if (player.vehicle) player.exitVehicle(); travelTo(LANDMARKS.zpd); };
   m.querySelector('[data-a=reset]').onclick = () => { if (confirm('确定要清除所有进度吗？')) detective.resetSave(); };
 }
@@ -227,6 +237,8 @@ function handleInput(dt) {
     else { const v = nearestCruiser(player.pos); if (v) player.enterVehicle(v); }
   }
   if (input.hit('KeyH') && player.vehicle) player.vehicle.siren = !player.vehicle.siren;
+  if (input.hit('KeyT')) { if (cop.active) cop.stop('提前下班'); else cop.start(); }
+  if (input.hit('KeyE') && cop.tryTicket()) return;
   if (input.hit('KeyE') && !player.vehicle) {
     const it = interact.nearest(player.pos);
     if (it) { input.unlock(); it.onInteract(player); }
@@ -247,7 +259,7 @@ function updateMarkers() {
   const W = innerWidth, H = innerHeight;
   const proj = (x, y, z) => { tmpV.set(x, y, z).project(camera); return tmpV.z < 1 ? { x: (tmpV.x + 1) / 2 * W, y: (1 - tmpV.y) / 2 * H } : null; };
   // 剧情 NPC 名牌
-  const tgt = detective.targetPos(player.pos);
+  const tgt = cop.active ? cop.nearestOffender() : detective.targetPos(player.pos);
   for (const [k, n] of detective.npcs) {
     const d2 = n.pos.distanceToSquared(player.pos);
     if (d2 > 45 * 45) continue;
@@ -271,7 +283,7 @@ function updateMarkers() {
     const npcShown = [...detective.npcs.values()].some(n => Math.abs(tgt.x - n.pos.x) < 0.01 && Math.abs(tgt.z - n.pos.z) < 0.01) && d < 45;
     if (p && d > 6 && !npcShown) list.push({ x: Math.min(W - 40, Math.max(40, p.x)), y: Math.min(H - 60, Math.max(60, p.y)), cls: 'marker', html: `${tgt.icon || '⭐'}<small>${esc(tgt.label)} · ${Math.round(d)}m</small>` });
     const o = detective.objective;
-    ui.setObjective(detective.active ? { ...o, dist: d } : { caseTitle: '待命中', text: '去 ZPD 第一分局门口找牛局长领取案件', dist: d });
+    ui.setObjective(cop.active ? { ...cop.hud(), dist: d } : detective.active ? { ...o, dist: d } : { caseTitle: '待命中', text: '去 ZPD 门口找牛局长领取案件 · 或按 T 开始交警值班', dist: d });
   }
   // 侦探感知：显示附近线索
   if (detective.sense > 0) {
@@ -309,6 +321,7 @@ function loop() {
     traffic.update(dt, player.pos, player.pos);
     crowd.update(dt, player.pos, dk, player.pos);
     detective.update(dt, t, player.pos);
+    cop.update(dt, t);
     for (const v of cruisers) if (v !== player.vehicle) v.update(dt, 0);
     env.update(dt, player.pos, dk);
     for (const f of animators) f(dt, t, player.pos);
@@ -316,11 +329,16 @@ function loop() {
     // 提示
     let prompt = null, act = null, car = false;
     if (!ui.inDialog && !ui.modalOpen) {
-      if (player.vehicle) prompt = IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
+      const offV = player.vehicle && cop.nearest();
+      if (offV) { prompt = `<kbd>E</kbd> 拦停开罚单：${offV.offense.icon} ${offV.offense.name}`; act = '罚单'; }
+      else if (player.vehicle) prompt = IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
+      else if (player.gliding) prompt = IS_TOUCH ? '🪂 滑翔中 · 再按「跳」收伞' : '🪂 滑翔中 · <kbd>Space</kbd> 收伞 · <kbd>Shift</kbd> 俯冲';
       else {
         const it = interact.nearest(player.pos);
         car = !!nearestCruiser(player.pos);
-        if (it) { prompt = `<kbd>E</kbd> ${esc(it.label)}`; act = it.label.startsWith('调查') ? '调查' : '对话'; }
+        const off = cop.nearest();
+        if (off) { prompt = `<kbd>E</kbd> 开罚单：${off.offense.icon} ${off.offense.name}`; act = '罚单'; }
+        else if (it) { prompt = `<kbd>E</kbd> ${esc(it.label)}`; act = it.label.startsWith('调查') ? '调查' : '对话'; }
         else if (car) prompt = `<kbd>F</kbd> 驾驶 ZPD 警车`;
         else if (crowd.nearest(player.pos)) { prompt = `<kbd>E</kbd> 打个招呼`; act = '招呼'; }
       }
@@ -332,7 +350,7 @@ function loop() {
     ui.setClock(env.state.time);
     ui.setRep(detective.rep, detective.rank);
     const D = DISTRICTS[dk];
-    minimap.update(player.pos, player.yaw, cam.yaw, detective.targetPos(player.pos), D ? D.name : dk === 'canal' ? '运河' : '郊外', cruisers.map(v => ({ x: v.pos.x, z: v.pos.z, color: '#4aa3ff', r: 5 })));
+    minimap.update(player.pos, player.yaw, cam.yaw, cop.active ? cop.nearestOffender() : detective.targetPos(player.pos), D ? D.name : dk === 'canal' ? '运河' : '郊外', [...cruisers.map(v => ({ x: v.pos.x, z: v.pos.z, color: '#4aa3ff', r: 5 })), ...cop.mapDots()]);
     updateMarkers();
   } else if (!started) {
     // 标题画面：环绕镜头
@@ -350,4 +368,4 @@ function loop() {
 init().catch(e => { console.error(e); setLoad('加载失败：' + e.message, 1); });
 
 // 调试接口
-window.__zoo = { get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };
+window.__zoo = { get cop() { return cop; }, get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };

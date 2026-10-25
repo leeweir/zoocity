@@ -61,6 +61,34 @@ export const CONNECTORS = [
   { x1: 0, z1: 280, x2: 0, z2: 420, w: ROAD_W, bridge: true }, // 撒瓦纳 → 兔窝镇（桥）
 ];
 
+// 外环辅路（地面层）：沿撒瓦纳中央区外圈、环城高架内侧，把各区路网首尾连起来，消除断头路。
+// 每条撒瓦纳道路、每个气候墙门洞、每条弧形大道端点都有支路接入；冰川镇/撒哈拉/雨林各加一圈区内环路。
+export const FRONT = 307;   // = 高架中线 322 - 出口坡道横向偏移 15
+export const FRONTAGE = (() => {
+  const F = FRONT, w = ROAD_W, out = [];
+  const seg = (x1, z1, x2, z2, name, ww = w) => out.push({ x1, z1, x2, z2, w: ww, name });
+  // 城市外环
+  seg(-F, -F, F, -F, '北辅路'); seg(F, -F, F, 286, '东辅路'); seg(-F, -F, -F, 286, '西辅路'); seg(-F, 286, F, 286, '滨河路', 10);
+  const sv = [-200, -120, -40, 40, 120, 200];
+  for (const x of sv) { seg(x, -280, x, -F); seg(x, 280, x, 286); }
+  for (const z of sv) { seg(-280, z, -F, z); seg(280, z, F, z); }
+  // 气候墙门洞 → 外环
+  for (const z of [-200, 150]) seg(F, z, 330, z);                 // 撒哈拉（z=-360 在角外，单独接）
+  seg(F, -F, F, -360); seg(F, -360, 330, -360);
+  for (const z of [-140, 140]) seg(-F, z, -330, z);               // 雨林
+  for (const x of [-210, 200]) seg(x, -F, x, -330);               // 冰川镇
+  // 弧形大道端点 → 外环
+  seg(-112, -280, -112, -F); seg(-280, -112, -F, -112);
+  seg(-280, 80, -F, 80); seg(-80, 280, -80, 286); seg(80, 280, 80, 286); seg(280, 80, F, 80);
+  // 冰川镇区内环路（北缘 + 东缘，与 z=-420 相接）
+  seg(-690, -935, 290, -935, '冰川北环路'); seg(290, -935, 290, -420, '冰川东环路'); seg(-690, -935, -690, -420, '冰川西环路');
+  // 撒哈拉区内环路
+  seg(420, -440, 940, -440, '沙丘北环路'); seg(940, -440, 940, 270, '沙丘东环路'); seg(420, 270, 940, 270, '沙丘南环路');
+  // 雨林区内环路
+  seg(-940, -140, -940, 270, '雨林西环路'); seg(-940, 270, -420, 270, '雨林南环路');
+  return out;
+})();
+
 // 地标：每个地标占据一个完整街区（或街区中的一块地）。
 // 地区建造者必须在 rect 内建造对应地标，并保证 spots 中的点可步行、周围 3m 无碰撞体。
 // front：地标朝向道路一侧的入口广场中心。
@@ -134,10 +162,12 @@ export function allRoads() {
   const roads = [];
   for (const [key, D] of Object.entries(DISTRICTS)) {
     const r = D.rect;
-    for (const x of D.roadsX) roads.push({ x1: x, z1: r.z0, x2: x, z2: r.z1, w: ROAD_W, district: key });
+    // 雨林区东北角与冰川镇重叠：那里的南北路从 z=-330 起
+    for (const x of D.roadsX) roads.push({ x1: x, z1: key === 'rainforest' && x > -700 ? -330 : r.z0, x2: x, z2: r.z1, w: ROAD_W, district: key });
     for (const z of D.roadsZ) roads.push({ x1: r.x0, z1: z, x2: r.x1, z2: z, w: ROAD_W, district: key });
   }
   for (const c of CONNECTORS) roads.push({ ...c, district: 'connector' });
+  for (const c of FRONTAGE) roads.push({ ...c, district: 'frontage' });
   return roads;
 }
 

@@ -129,9 +129,10 @@ export function build(ctx) {
       b.box(0.25, 0.012, 4, x, 0.022, z + 2, 0xf2c94c, { shadow: false });
     }
   }
-  // 东西向道路：只有 z=0 穿过气候墙通道，其余止于气候墙 (x=-345)
+  // 东西向道路：全部穿过气候墙门洞，直通撒瓦纳方向（z=-300 在冰川镇重叠区，止于墙前）
+  const GATE_Z = D.roadsZ.filter(z => z > TUNDRA_Z + 12);
   for (const z of D.roadsZ) {
-    const rx1 = z === 0 ? R.x1 : WALL_X0;
+    const rx1 = GATE_Z.includes(z) ? R.x1 : WALL_X0;
     b.box(rx1 - R.x0, 0.022, ROAD_W, (R.x0 + rx1) / 2, 0, z, ASPH, { mat: 'shiny', shadow: false });
     for (let x = R.x0 + 3; x < rx1 - 5; x += 9) {
       if (D.roadsX.some(xr => Math.abs(x + 2 - xr) < HW + 3)) continue;
@@ -485,9 +486,11 @@ export function build(ctx) {
   // ================= 气候墙（东边界） =================
   {
     const xc = (WALL_X0 + R.x1) / 2; // -337.5
-    const segs = [[TUNDRA_Z, -10], [10, R.z1]];
+    const segs = [];
+    { let zz = TUNDRA_Z; for (const g of [...GATE_Z].sort((a, b2) => a - b2)) { if (g - 10 > zz) segs.push([zz, g - 10]); zz = g + 10; } if (R.z1 > zz) segs.push([zz, R.z1]); }
     for (const [za, zb] of segs) {
       const len = zb - za, zc = (za + zb) / 2;
+      if (len < 2) continue;
       b.box(15, 4, len, xc, 0, zc, 0x6e7a70, { jitter: 0.05 });
       b.box(6, 54, len, xc + 1, 4, zc, 0x4f6466, { mat: 'metal' });
       b.box(8, 2, len, xc + 1, 58, zc, 0x6a8084, { mat: 'metal' });
@@ -507,13 +510,16 @@ export function build(ctx) {
       }
       col.box(xc, zc, 15, len, { yMax: 60 });
     }
-    // 通道门楼
-    for (const s of [-1, 1]) {
-      b.box(12, 26, 5, xc, 0, s * 12.5, 0x5a7072, { mat: 'metal' });
-      b.box(12.4, 1, 5.4, xc, 26, s * 12.5, 0x6ff0e8, { mat: 'glow' });
+    // 通道门楼（每个门洞）
+    for (const gz of GATE_Z) {
+      for (const s of [-1, 1]) {
+        b.box(12, 26, 5, xc, 0, gz + s * 12.5, 0x5a7072, { mat: 'metal' });
+        b.box(12.4, 1, 5.4, xc, 26, gz + s * 12.5, 0x6ff0e8, { mat: 'glow' });
+        col.box(xc, gz + s * 12.5, 12, 5, { yMax: 27 });
+      }
+      b.box(12, 6, 30, xc, 20, gz, 0x4a5f62, { mat: 'metal' });
+      b.box(0.3, 0.5, 30, xc - 6.1, 20.4, gz, 0x6ff0e8, { mat: 'glow' });
     }
-    b.box(12, 6, 30, xc, 20, 0, 0x4a5f62, { mat: 'metal' });
-    b.box(0.3, 0.5, 30, xc - 6.1, 20.4, 0, 0x6ff0e8, { mat: 'glow' });
     if (ctx.tex && ctx.tex.signMesh) {
       const s1 = ctx.tex.signMesh('雨林区  RAINFOREST DISTRICT', 20, { bg: '#1f5e3a', fg: '#e8ffe0', w: 1024, h: 128, font: 'bold 64px "PingFang SC","Microsoft YaHei",sans-serif' });
       s1.position.set(xc + 6.15, 23, 0); s1.rotation.y = Math.PI / 2; scene.add(s1);

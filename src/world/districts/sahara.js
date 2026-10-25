@@ -415,7 +415,7 @@ export function build(ctx) {
       if (edge && sides.length && R() < 0.08) { courtyard(x0, x1, z0, z1); continue; }
       const g = 1.2 + R() * 2.2;
       const w = lw - 2 * g, d = ld - 2 * g;
-      const h = 8 + 72 * Math.pow(R(), 2.3);
+      const h = 7 + 34 * Math.pow(R(), 2.6);   // 低矮沙岩建筑为主，偶有高塔（参考电影：撒哈拉以圆顶、拱廊为主）
       building((x0 + x1) / 2, (z0 + z1) / 2, w, d, h, sides.length ? pick(sides) : null);
       // 路边棕榈
       for (const sd of sides) {
@@ -464,9 +464,15 @@ export function build(ctx) {
   {
     const WX = 337.5, WW = 15, WH = 34;
     const WALLC = 0xc7a77a, BAND = 0x8d7a62;
-    const segs = [[rect.z0, -10], [10, rect.z1]];
+    // 每条东西向道路都在墙上开门洞（不再有断头路）
+    const GATES = [0, ...D.roadsZ.filter(z => z !== 0)].sort((a, b2) => a - b2);
+    const segs = [];
+    let zz = rect.z0;
+    for (const g of GATES) { if (g - 10 > zz) segs.push([zz, g - 10]); zz = g + 10; }
+    if (rect.z1 > zz) segs.push([zz, rect.z1]);
     for (const [z0, z1] of segs) {
       const zc = (z0 + z1) / 2, L = z1 - z0;
+      if (L < 2) continue;
       b.box(WW, WH, L, WX, 0, zc, WALLC);
       for (const y of [8, 18, 28]) b.box(WW + 0.8, 0.8, L, WX, y, zc, BAND, { mat: 'metal' });
       for (let z = z0 + 3; z < z1 - 2; z += 6) {
@@ -480,16 +486,18 @@ export function build(ctx) {
       }
       col.box(WX, zc, WW, L, { yMax: WH + 2 });
     }
-    // 门洞：两侧门柱饰带 + 顶梁 + 招牌
-    for (const s of [-1, 1]) {
-      b.box(WW + 2, WH + 6, 4, WX, 0, s * 12, 0xb8926a);
-      b.box(0.3, 12, 0.3, WX + WW / 2 + 1.15, 0.5, s * 10.3, 0xffb347, { mat: 'glow' });
-      b.box(0.3, 12, 0.3, WX - WW / 2 - 1.15, 0.5, s * 10.3, 0xffb347, { mat: 'glow' });
-      col.box(WX, s * 12, WW + 2, 4, { yMax: WH + 6 });
+    // 门洞：两侧门柱饰带 + 顶梁
+    for (const gz of GATES) {
+      for (const s of [-1, 1]) {
+        b.box(WW + 2, WH + 6, 4, WX, 0, gz + s * 12, 0xb8926a);
+        b.box(0.3, 12, 0.3, WX + WW / 2 + 1.15, 0.5, gz + s * 10.3, 0xffb347, { mat: 'glow' });
+        b.box(0.3, 12, 0.3, WX - WW / 2 - 1.15, 0.5, gz + s * 10.3, 0xffb347, { mat: 'glow' });
+        col.box(WX, gz + s * 12, WW + 2, 4, { yMax: WH + 6 });
+      }
+      b.box(WW + 2, 6, 20, WX, 14, gz, 0xb8926a);
+      b.box(WW + 2.4, 0.4, 20.4, WX, 14, gz, 0xffb347, { mat: 'glow' });
+      col.box(WX, gz, WW + 2, 20, { yMin: 14, yMax: 20 });
     }
-    b.box(WW + 2, 6, 20, WX, 14, 0, 0xb8926a);
-    b.box(WW + 2.4, 0.4, 20.4, WX, 14, 0, 0xffb347, { mat: 'glow' });
-    col.box(WX, 0, WW + 2, 20, { yMin: 14, yMax: 20 });
     addSign('撒哈拉广场  SAHARA SQUARE', 18, WX + WW / 2 + 1.1, 17, 0, PI / 2, { bg: '#5a2a10', fg: '#ffd36b', border: '#ffb347', w: 1024, h: 160 });
     addSign('撒哈拉广场  SAHARA SQUARE', 18, WX - WW / 2 - 1.1, 17, 0, -PI / 2, { bg: '#5a2a10', fg: '#ffd36b', border: '#ffb347', w: 1024, h: 160 });
 

@@ -308,6 +308,7 @@ export class Detective {
       <h2>🐃 牛局长的案件板</h2>
       <div class="meta">“霍普斯，王尔德。动物城不缺麻烦，缺的是能解决麻烦的警察。别让我失望。” — 当前声望 ⭐ ${this.rep}（${this.rank}）</div>
       ${rows}
+      <div class="caseRow" style="background:#eaf2ff"><div style="font-size:28px">🚔</div><div><b>交警值班 · 200 张罚单挑战</b><div style="font-size:12px;opacity:.65">3 分钟限时 · 开罚单拿分 · 可随时按 T 切换</div></div><button data-cop="1">开始值班</button></div>
       ${this.active ? '<div style="text-align:right;margin-top:10px"><button class="btn ghost" data-ab="1">暂停当前案件</button></div>' : ''}
     </div>`);
     m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
@@ -316,6 +317,7 @@ export class Detective {
       this._play([['npc', ['霍普斯！王尔德！有新案子了。', '又有麻烦了。别站着，去处理。', '这个案子交给你们。记住：证据说话。'][Math.floor(Math.random() * 3)]]], 'bogo', () => this.startCase(def));
     });
     const ab = m.querySelector('[data-ab]'); if (ab) ab.onclick = () => { this.ui.closeModal(); this.abandon(); };
+    const cp = m.querySelector('[data-cop]'); if (cp) cp.onclick = () => { this.ui.closeModal(); this._play([['npc', '交通违章是动物城的头号麻烦。霍普斯，你以前能在中午前开出两百张罚单——证明给我看。']], 'bogo', () => this.onTrafficDuty?.()); };
   }
 
   openCasebook() {

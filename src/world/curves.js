@@ -25,8 +25,8 @@ export const CURVES = [
   { key: 'nwArc', name: '月牙大道', pts: arc(-280, -280, 168, 0, Math.PI / 2), color: '#ffffff' },
   { key: 'swArc', name: '日落弧线大道', pts: arc(-280, 280, 200, -Math.PI / 2, 0), color: '#ffffff' },
   { key: 'seArc', name: '湖畔弧线大道', pts: arc(280, 280, 200, Math.PI, Math.PI * 1.5), color: '#ffffff' },
-  { key: 'jungle', name: '雨林盘山路', pts: wave(-940, -385, 214, 28, 300, 0.4), color: '#ffffff' },
-  { key: 'dune', name: '沙丘弯道', pts: wave(385, 940, -410, 18, 260, 1.2), color: '#ffffff' },
+  { key: 'jungle', name: '雨林盘山路', pts: wave(-880, -420, 214, 28, 300, 0.4), color: '#ffffff' },
+  { key: 'dune', name: '沙丘弯道', pts: wave(420, 840, -410, 18, 260, 1.2), color: '#ffffff' },
 ].map(c => {
   // 预计算累积里程
   const cum = [0];
@@ -104,7 +104,7 @@ function onGridRoad(layout, x, z) {
     if (x < r.x0 - 2 || x > r.x1 + 2 || z < r.z0 - 2 || z > r.z1 + 2) continue;
     if (D.roadsX.some(v => Math.abs(x - v) < hw) || D.roadsZ.some(v => Math.abs(z - v) < hw)) return true;
   }
-  return layout.CONNECTORS.some(c => Math.abs(c.x1 - c.x2) < 1 ? Math.abs(x - c.x1) < hw && z > Math.min(c.z1, c.z2) && z < Math.max(c.z1, c.z2) : Math.abs(z - c.z1) < hw && x > Math.min(c.x1, c.x2) && x < Math.max(c.x1, c.x2));
+  return [...layout.CONNECTORS, ...(layout.FRONTAGE || [])].some(c => Math.abs(c.x1 - c.x2) < 1 ? Math.abs(x - c.x1) < hw && z > Math.min(c.z1, c.z2) && z < Math.max(c.z1, c.z2) : Math.abs(z - c.z1) < hw && x > Math.min(c.x1, c.x2) && x < Math.max(c.x1, c.x2));
 }
 
 export function buildCurves(ctx) {

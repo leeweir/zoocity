@@ -26,7 +26,8 @@ export class UI {
         <div id="help">
           <kbd>WASD</kbd> 移动 · <kbd>Shift</kbd> 奔跑 · <kbd>Space</kbd> 跳跃 · <kbd>E</kbd> 互动<br>
           <kbd>Q</kbd> 侦探感知 · <kbd>Tab</kbd> 切换角色 · <kbd>F</kbd> 上/下警车 · <kbd>H</kbd> 警笛<br>
-          <kbd>J</kbd> 侦探档案 · <kbd>M</kbd> 地图/快速出行 · <kbd>Esc</kbd> 菜单
+          <kbd>J</kbd> 侦探档案 · <kbd>M</kbd> 地图/快速出行 · <kbd>Esc</kbd> 菜单<br>
+          空中 <kbd>Space</kbd> 滑翔伞 · <kbd>T</kbd> 交警模式
         </div>
         <div id="fps"></div>
         <div id="touchBtns">
@@ -40,6 +41,7 @@ export class UI {
           <button class="tb sm" data-k="KeyJ">📒</button>
           <button class="tb sm" data-k="KeyM">🗺️</button>
           <button class="tb sm" data-k="KeyH" id="tbSiren">🚨</button>
+          <button class="tb sm" data-k="KeyT" id="tbCop">🚔</button>
           <button class="tb sm" data-k="Escape">⏸</button>
         </div>
       </div>

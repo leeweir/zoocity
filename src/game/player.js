@@ -24,6 +24,10 @@ export class Player {
     this.vehicle = null;
     this.stamina = 1;
     this.frozen = false;
+    this.gliding = false;
+    this.glider = makeGlider();
+    this.glider.visible = false;
+    this.root.add(this.glider);
     this._swapBuddy();
   }
 
@@ -75,23 +79,44 @@ export class Player {
       const targetYaw = Math.atan2(wx, wz);
       let d = targetYaw - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       this.yaw += d * Math.min(1, dt * 12);
-      const accel = this.onGround ? 14 : 4;
-      this.vel.x += (wx * speed - this.vel.x) * Math.min(1, dt * accel);
-      this.vel.z += (wz * speed - this.vel.z) * Math.min(1, dt * accel);
-    } else {
+      // 滑翔时摇杆/方向键只负责转向，速度由滑翔物理决定
+      if (!this.gliding) {
+        const accel = this.onGround ? 14 : 4;
+        this.vel.x += (wx * speed - this.vel.x) * Math.min(1, dt * accel);
+        this.vel.z += (wz * speed - this.vel.z) * Math.min(1, dt * accel);
+      } else this.yaw -= d * Math.min(1, dt * 12) * 0.55;   // 伞转向比走路慢一些
+    } else if (!this.gliding) {
       const damp = this.onGround ? 12 : 1;
       this.vel.x -= this.vel.x * Math.min(1, dt * damp);
       this.vel.z -= this.vel.z * Math.min(1, dt * damp);
     }
     if (!sprint || !moving) this.stamina = Math.min(1, this.stamina + dt * 0.18);
 
-    if (input.hit('Space') && this.onGround && !this.frozen) { this.vel.y = S.jump; this.onGround = false; }
-    this.vel.y -= 22 * dt;
+    if (input.hit('Space') && !this.frozen) {
+      if (this.onGround) { this.vel.y = S.jump; this.onGround = false; }
+      // 空中再按跳跃：展开 / 收起滑翔伞（离地 > 2m 才能展开）
+      else if (this.gliding) this.gliding = false;
+      else if (this.pos.y - this.col.groundAt(this.pos.x, this.pos.z, this.pos.y) > 2) this.gliding = true;
+    }
+    if (this.gliding) {
+      // 滑翔：缓慢下沉、前向速度更快、可转向；按住冲刺键俯冲加速
+      const dive = sprint;
+      const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+      const fwd = dive ? 19 : 12.5;
+      const k = Math.min(1, dt * 1.6);
+      this.vel.x += (fx * fwd - this.vel.x) * k;
+      this.vel.z += (fz * fwd - this.vel.z) * k;
+      const sink = dive ? -6 : -1.6;
+      this.vel.y += (sink - this.vel.y) * Math.min(1, dt * 3);
+      // 上升气流：气候墙排气塔 / 雨林雾塔附近可以爬升
+      if (this.updraft?.(this.pos)) this.vel.y += (4 - this.vel.y) * Math.min(1, dt * 2);
+    } else this.vel.y -= 22 * dt;
     this.pos.addScaledVector(this.vel, dt);
     const g = this.col.resolve(this.pos, S.radius, S.height, 0.6);
     if (this.pos.y <= g + 0.001) {
       if (this.pos.y < g - 0.0) this.pos.y = this.onGround ? g : Math.max(this.pos.y, g); // 上台阶
       this.pos.y = g; this.vel.y = Math.max(0, this.vel.y); this.onGround = true;
+      this.gliding = false;
     } else if (this.onGround && this.pos.y - g < 0.45 && this.vel.y <= 0) {
       this.pos.y = g; // 贴地下台阶
     } else this.onGround = false;
@@ -100,8 +125,16 @@ export class Player {
     const hs = Math.hypot(this.vel.x, this.vel.z);
     this.root.position.copy(this.pos);
     this.root.rotation.y = this.yaw;
+    // 滑翔伞外观：伞翼随转向倾斜
+    this.glider.visible = this.gliding;
+    if (this.gliding) {
+      this._bank = (this._bank || 0) + (((this._lastYaw ?? this.yaw) - this.yaw) / Math.max(dt, 1e-3) * 0.12 - (this._bank || 0)) * Math.min(1, dt * 4);
+      this.glider.rotation.z = THREE.MathUtils.clamp(this._bank, -0.5, 0.5);
+      this.root.rotation.z = this.glider.rotation.z * 0.3;
+    } else this.root.rotation.z = 0;
+    this._lastYaw = this.yaw;
     const ud = this.model.userData;
-    ud.setPose?.(!this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
+    ud.setPose?.(this.gliding ? 'sit' : !this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
     ud.update?.(dt, this.onGround ? hs : 0);
     this._updateBuddy(dt);
     return hs;
@@ -182,6 +215,37 @@ export class Player {
   }
 }
 
+// 滑翔伞：拱形伞翼（ZPD 蓝 + 胡萝卜橙条纹） + 伞绳，挂在角色头顶上方
+function makeGlider() {
+  const g = new THREE.Group();
+  const span = 5.2, chord = 1.6, H = 3.2;
+  const cells = 9;
+  for (let i = 0; i < cells; i++) {
+    const a0 = -0.95 + (i / cells) * 1.9, a1 = -0.95 + ((i + 1) / cells) * 1.9;
+    const am = (a0 + a1) / 2;
+    const x = Math.sin(am) * span / 2, y = H + Math.cos(am) * 0.9;
+    const cellW = span / cells * 1.08;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(cellW, 0.16, chord), new THREE.MeshStandardMaterial({ color: i % 2 ? 0x1f3b73 : 0xf08a24, roughness: 0.6, side: THREE.DoubleSide }));
+    m.position.set(x, y, 0.1);
+    m.rotation.z = -am;
+    m.castShadow = true;
+    g.add(m);
+  }
+  // 伞绳
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xdddddd });
+  const pts = [];
+  for (let i = 0; i <= cells; i += 3) {
+    const a = -0.95 + (i / cells) * 1.9;
+    const tip = new THREE.Vector3(Math.sin(a) * span / 2, H + Math.cos(a) * 0.9 - 0.1, 0.1);
+    for (const sx of [-0.18, 0.18]) pts.push(new THREE.Vector3(sx, 1.05, 0), tip);
+  }
+  g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  // ZPD 标志
+  const badge = new THREE.Mesh(new THREE.CircleGeometry(0.35, 16), new THREE.MeshBasicMaterial({ color: 0xf2c14e, side: THREE.DoubleSide }));
+  badge.position.set(0, H + 0.99, 0.1); badge.rotation.x = -Math.PI / 2; g.add(badge);
+  return g;
+}
+
 // 第三人称相机：鼠标环绕、滚轮缩放、防穿墙
 export class ThirdPersonCamera {
   constructor(camera, col) {
@@ -195,7 +259,7 @@ export class ThirdPersonCamera {
     this.yaw -= input.mouseDX * sens;
     this.pitch = Math.min(1.25, Math.max(-0.35, this.pitch + input.mouseDY * sens));
     const v = player.vehicle;
-    const base = v ? 9 : player.stats.camDist;
+    const base = v ? 9 : player.gliding ? 8 : player.stats.camDist;
     if (input.wheel) this.zoom = Math.min(3.0, Math.max(0.4, (this.zoom || 1) + input.wheel * 0.12));
     this.targetDist = base * (this.zoom || 1);
     if (v && !input.locked && Math.abs(v.speed) > 2) {

@@ -1,6 +1,7 @@
 // 小地图 + 全屏地图（点击地标快速出行）
 import { DISTRICTS, LANDMARKS, WATER, BRIDGE, ROAD_W, CONNECTORS, WORLD_SIZE } from '../world/layout.js';
-import { LOOP } from '../world/highway.js';
+import { LOOP, EXITS, exitPath } from '../world/highway.js';
+import { FRONTAGE } from '../world/layout.js';
 import { CURVES } from '../world/curves.js';
 
 const HALF = WORLD_SIZE / 2;
@@ -25,6 +26,9 @@ function drawWorld(g, size) {
   g.beginPath();
   for (const c of CONNECTORS) { g.moveTo(X(c.x1), Z(c.z1)); g.lineTo(X(c.x2), Z(c.z2)); }
   g.strokeStyle = '#d9c27a'; g.lineWidth = Math.max(1.5, ROAD_W * k); g.lineCap = 'round'; g.stroke();
+  // 外环辅路 / 区内环路
+  g.lineCap = 'round'; g.strokeStyle = 'rgba(40,40,40,.85)';
+  for (const c of FRONTAGE) { g.lineWidth = Math.max(1, (c.w || ROAD_W) * k * 0.9); g.beginPath(); g.moveTo(X(c.x1), Z(c.z1)); g.lineTo(X(c.x2), Z(c.z2)); g.stroke(); }
   // 弧形大道
   g.lineCap = 'round'; g.lineJoin = 'round';
   for (const c of CURVES) {
@@ -40,6 +44,16 @@ function drawWorld(g, size) {
     g.closePath();
     g.strokeStyle = 'rgba(20,24,34,.9)'; g.lineWidth = Math.max(3, 26 * k); g.stroke();
     g.strokeStyle = '#ffb347'; g.lineWidth = Math.max(1.6, 13 * k); g.stroke();
+    // 出口坡道（绿色）+ 编号
+    for (let i = 0; i < EXITS.length; i++) {
+      const { pts } = exitPath(EXITS[i]);
+      g.beginPath(); pts.forEach((p, j) => j ? g.lineTo(X(p.x), Z(p.z)) : g.moveTo(X(p.x), Z(p.z)));
+      g.strokeStyle = '#2f9e44'; g.lineWidth = Math.max(2, 9 * k); g.stroke();
+      const e = pts[pts.length - 1];
+      g.fillStyle = '#2f9e44'; g.beginPath(); g.arc(X(e.x), Z(e.z), Math.max(4, 14 * k), 0, 7); g.fill();
+      g.fillStyle = '#fff'; g.font = `bold ${Math.max(8, Math.round(18 * k))}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('出', X(e.x), Z(e.z) + 1);
+    }
   }
   g.fillStyle = '#a89f8f'; g.fillRect(X(BRIDGE.x - BRIDGE.w / 2), Z(BRIDGE.z0), BRIDGE.w * k, (BRIDGE.z1 - BRIDGE.z0) * k);
 }
@@ -125,6 +139,8 @@ export class Minimap {
       g.closePath(); g.strokeStyle = '#ffb347'; g.lineWidth = 5; g.stroke();
       g.font = 'bold 20px "PingFang SC",sans-serif'; g.fillStyle = '#ffb347';
       g.fillText('环城高架 · 城市快速路', S / 2, P(0, -322)[1] - 12);
+      g.font = '14px "PingFang SC",sans-serif';
+      for (const e of EXITS) { const p = exitPath(e).pts.at(-1); const [x, z] = P(p.x, p.z); g.fillStyle = '#c9f7d0'; g.strokeStyle = 'rgba(0,0,0,.7)'; g.lineWidth = 3; const t = e.name.split(' · ')[0]; g.strokeText(t, x, z + 20); g.fillText(t, x, z + 20); }
       this._loopDrawn = true;
     }
     g.textAlign = 'center';
