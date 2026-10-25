@@ -59,7 +59,7 @@ export class Crowd {
     if (!p) return null;
     const species = sp[Math.floor(this.rand() * sp.length)];
     const outfits = ['casual', 'suit', 'worker', 'dress', 'casual'];
-    const g = createAnimal(species, { outfit: outfits[Math.floor(this.rand() * outfits.length)], seed: Math.floor(this.rand() * 1e6) });
+    const g = createAnimal(species, { outfit: outfits[Math.floor(this.rand() * outfits.length)], seed: Math.floor(this.rand() * 1e6), detail: 'lo' });
     g.position.set(p.x, 0.15, p.z);
     this.scene.add(g);
     const big = g.userData.height || 1.5;

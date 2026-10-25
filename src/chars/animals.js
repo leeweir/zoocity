@@ -237,18 +237,54 @@ const SP = {
 // 共享几何体 & 材质
 // ---------------------------------------------------------------------------
 function strip(g) { g.deleteAttribute('uv'); return g; }
-const G = {
-  sph: strip(new THREE.SphereGeometry(1, 8, 6)),
-  sphLo: strip(new THREE.SphereGeometry(1, 6, 4)),
-  hemi: strip(new THREE.SphereGeometry(1, 8, 3, 0, Math.PI * 2, 0, Math.PI / 2)),
-  cyl: strip(new THREE.CylinderGeometry(1, 1, 1, 8)),
-  cylLo: strip(new THREE.CylinderGeometry(1, 1, 1, 6, 1, true)),
-  frustum: strip(new THREE.CylinderGeometry(0.62, 1, 1, 8)),
-  cone: strip(new THREE.ConeGeometry(1, 1, 8)),
-  cone4: strip(new THREE.ConeGeometry(1, 1, 5)),
+// 车削体：profile = [[半径, y], ...]，y 0..1，生成单位高度的光滑旋转体
+function lathe(profile, seg) {
+  return strip(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(Math.max(0.0001, r), y)), seg));
+}
+// q = 细节系数：1 = 剧情角色/近景，0.55 = 路人
+function makeG(q) {
+  const n = (v, min = 4) => Math.max(min, Math.round(v * q));
+  return {
+  sph: strip(new THREE.SphereGeometry(1, n(14, 8), n(10, 6))),
+  sphHi: strip(new THREE.SphereGeometry(1, n(18, 10), n(14, 8))),
+  sphLo: strip(new THREE.SphereGeometry(1, n(8, 6), n(6, 4))),
+  hemi: strip(new THREE.SphereGeometry(1, n(14, 8), n(5, 3), 0, Math.PI * 2, 0, Math.PI / 2)),
+  cyl: strip(new THREE.CylinderGeometry(1, 1, 1, n(12, 6))),
+  cylLo: strip(new THREE.CylinderGeometry(1, 1, 1, n(10, 6), 1, true)),
+  frustum: strip(new THREE.CylinderGeometry(0.62, 1, 1, n(12, 6))),
+  cone: strip(new THREE.ConeGeometry(1, 1, n(12, 6))),
+  cone4: strip(new THREE.ConeGeometry(1, 1, 6)),
   box: strip(new THREE.BoxGeometry(1, 1, 1)),
-  torus: strip(new THREE.TorusGeometry(1, 0.35, 4, 8)),
-};
+  torus: strip(new THREE.TorusGeometry(1, 0.35, n(6, 4), n(12, 8))),
+  // 胶囊：半径 1、总高 1（含两端半球），以中心为原点。四肢用它，消除“串珠”感。
+  cap: strip(new THREE.CapsuleGeometry(1, 1, n(5, 3), n(12, 7)).scale(1, 1 / 3, 1)),
+  // 躯干：腰细、胸宽、肩部收圆的车削体（高 1，中心在 0.5 处 → 平移到 0..1 由 add 时缩放）
+  torso: lathe([[0, 0], [0.72, 0.02], [0.9, 0.1], [0.94, 0.24], [0.88, 0.38], [0.86, 0.5], [0.94, 0.64], [1.0, 0.76], [0.96, 0.86], [0.8, 0.94], [0.5, 0.99], [0, 1]], n(16, 7)).translate(0, -0.5, 0),
+  // 胯部：圆润的倒梨形
+  pelvis: lathe([[0, 0], [0.55, 0.04], [0.86, 0.2], [1.0, 0.45], [0.98, 0.7], [0.88, 0.9], [0.7, 1]], n(16, 7)).translate(0, -0.5, 0),
+  // 大腿：上粗下细
+  thighShape: lathe([[0, 0], [0.55, 0.03], [0.74, 0.14], [0.8, 0.4], [0.9, 0.75], [1.0, 0.9], [0.82, 0.98], [0, 1]], n(12, 7)).translate(0, -0.5, 0),
+  // 小腿：膝圆、腿肚、脚踝收细
+  calf: lathe([[0, 0], [0.55, 0.02], [0.66, 0.12], [0.72, 0.4], [0.92, 0.66], [0.94, 0.82], [0.84, 0.95], [0, 1]], n(12, 7)).translate(0, -0.5, 0),
+  // 前臂/上臂
+  arm: lathe([[0, 0], [0.62, 0.03], [0.78, 0.2], [0.84, 0.55], [0.98, 0.85], [0.8, 0.97], [0, 1]], n(12, 7)).translate(0, -0.5, 0),
+  // 头骨：后脑饱满、下巴收窄（前方 +z）
+  skull: (() => { const g = new THREE.SphereGeometry(1, n(20, 12), n(16, 9)); const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const jaw = y < 0 ? 1 - Math.min(0.22, -y * 0.25) * (z > 0 ? 1 : 0.4) : 1;   // 下巴收窄
+      const back = z < 0 ? 1 + (-z) * 0.06 : 1;                                       // 后脑饱满
+      p.setXYZ(i, x * jaw * back, y * (y > 0 ? 1.02 : 0.96), z * (z > 0 ? 0.97 : 1.03)); }
+    g.computeVertexNormals(); return strip(g); })(),
+  // 光滑口鼻：前端圆钝的锥（沿 +y 建）
+  muzzle: lathe([[0, 0], [0.9, 0.02], [1.0, 0.12], [0.86, 0.45], [0.62, 0.78], [0.42, 0.95], [0, 1]], n(14, 7)).translate(0, -0.5, 0),
+  // 耳朵：叶片形
+  leaf: lathe([[0, 0], [0.7, 0.08], [0.98, 0.3], [0.95, 0.55], [0.7, 0.8], [0.35, 0.95], [0, 1]], n(12, 7)).translate(0, -0.5, 0),
+  };
+}
+const GS = { hi: makeG(1), lo: makeG(0.55) };
+// 高度为 1（-0.5..0.5）的几何体；其余球/锥等按半径 1（高 2）处理
+for (const g of Object.values(GS)) for (const k of ['cap', 'torso', 'pelvis', 'thighShape', 'calf', 'arm', 'muzzle', 'leaf', 'cyl', 'cylLo', 'frustum', 'box']) g[k].userData.unit = true;
+let G = GS.hi;
 
 let _npcMat = null;
 export function npcMaterial() {
@@ -278,7 +314,8 @@ class Parts {
     _e.set(euler[0], euler[1], euler[2], 'XYZ');
     const q = new THREE.Quaternion().setFromEuler(_e);
     const off = new THREE.Vector3(0, centered ? len / 2 : 0, 0).applyQuaternion(q);
-    this.add(bone, geo, color, [base[0] + off.x, base[1] + off.y, base[2] + off.z], [rx, len / 2 * (centered ? 1 : 2), rz], q);
+    const sy = geo.userData.unit ? len : len / 2 * (centered ? 1 : 2);
+    this.add(bone, geo, color, [base[0] + off.x, base[1] + off.y, base[2] + off.z], [rx, sy, rz], q);
   }
   // 两点之间的柱/椭球
   between(bone, geo, color, a, b, rad, halfScale = 0.5) {
@@ -358,7 +395,8 @@ function shade(hex, k) {
 // ---------------------------------------------------------------------------
 // 模型构建（单位：头顶 = 1）
 // ---------------------------------------------------------------------------
-function buildGeometry(key, sp, fur, light, ot) {
+function buildGeometry(key, sp, fur, light, ot, lod = 'hi') {
+  G = GS[lod] || GS.hi;
   const P = new Parts();
   const L = sp.leg, hr = sp.head, hsx = sp.hsx ?? 1, hsy = sp.hsy ?? 1, hsz = sp.hsz ?? 1;
   const neck = sp.neck, footH = 0.03;
@@ -376,13 +414,16 @@ function buildGeometry(key, sp, fur, light, ot) {
   const stripe = sp.stripe, spot = sp.spot;
 
   // ---- 胯（裤子/裙子） ----
-  P.add('hips', G.sph, ot.pants, [0, 0.01, 0], [bw * 0.93, T * 0.22, bd * 0.93]);
+  P.add('hips', G.pelvis, ot.pants, [0, 0.0, 0], [bw * 0.95, T * 0.34, bd * 0.95]);
   if (ot.outfit === 'dress') P.add('hips', G.frustum, ot.top, [0, -T * 0.12, 0], [bw * 1.25, T * 0.55, bd * 1.25]);
 
   // ---- 躯干 ----
-  P.add('torso', G.sph, ot.top, [0, T * 0.45, 0], [bw, T * 0.55, bd]);
-  P.add('torso', G.sph, ot.vest || ot.top, [0, T * 0.74, 0], [sw, T * 0.3, bd * 0.95]);
-  if (sp.belly) P.add('torso', G.sph, ot.vest && ot.outfit === 'police' ? ot.top : ot.top, [0, T * 0.32, bd * 0.35], [bw * 0.9, T * 0.36 * (0.8 + sp.belly * 0.25), bd * (0.7 + sp.belly * 0.25)]);
+  // 一体式车削躯干（腰→胸→肩），外加一层略大的上身（背心/外套），过渡平滑
+  P.add('torso', G.torso, ot.top, [0, T * 0.5, 0], [Math.max(bw, sw) * 0.98, T * 1.04, bd]);
+  if (ot.vest && ot.vest !== ot.top) P.add('torso', G.torso, ot.vest, [0, T * 0.55, 0], [Math.max(bw, sw) * 1.03, T * 0.86, bd * 1.05]);
+  // 肩部圆球，连接手臂
+  for (const sd of [1, -1]) P.add('torso', G.sph, ot.vest && ot.outfit !== 'worker' ? ot.vest : ot.top, [sd * (sw * 0.86), T * 0.84, 0], [ar * 1.45, ar * 1.3, ar * 1.4]);
+  if (sp.belly) P.add('torso', G.sphHi, ot.top, [0, T * 0.34, bd * 0.3], [bw * 0.92, T * 0.38 * (0.8 + sp.belly * 0.25), bd * (0.72 + sp.belly * 0.25)]);
   // 腰带
   if (ot.outfit !== 'dress') {
     P.add('torso', G.cyl, ot.outfit === 'police' ? '#111111' : '#3a2a1e', [0, T * 0.06, 0], [bw * 1.0, T * 0.05, bd * (sp.belly ? 1.08 : 1.0)]);
@@ -410,7 +451,7 @@ function buildGeometry(key, sp, fur, light, ot) {
   // 脖子
   const neckR = sp.neckR ?? hr * 0.5 * Math.min(hsx, 1.0);
   const neckTop = T + neck + hr * hsy * 0.5;
-  P.add('torso', G.cyl, fur, [0, (T * 0.85 + neckTop) / 2, -0.005], [neckR, neckTop - T * 0.85, neckR * 0.95]);
+  P.add('torso', G.cap, fur, [0, (T * 0.85 + neckTop) / 2, -0.005], [neckR, neckTop - T * 0.85 + neckR * 1.4, neckR * 0.95]);
   if (ex.has('wool')) {
     for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; P.add('torso', G.sphLo, sp.wool, [Math.sin(a) * neckR * 1.3, T * 0.98, Math.cos(a) * neckR * 1.2], [neckR * 0.55, neckR * 0.5, neckR * 0.55]); }
   }
@@ -432,15 +473,19 @@ function buildGeometry(key, sp, fur, light, ot) {
 
   // ---- 头 ----
   const hc = [0, hr * hsy, 0];
-  P.add('head', G.sph, fur, hc, [hr * hsx, hr * hsy, hr * hsz]);
-  // 脸颊
-  P.add('head', G.sph, light, [0, hc[1] - hr * hsy * 0.3, hr * hsz * 0.4], [hr * hsx * 0.72, hr * hsy * 0.55, hr * hsz * 0.62]);
+  P.add('head', G.skull, fur, hc, [hr * hsx, hr * hsy, hr * hsz]);
+  // 脸颊：两团嵌入头骨的浅色毛，与口鼻衔接
+  for (const sd of [1, -1]) P.add('head', G.sph, light, [sd * hr * hsx * 0.32, hc[1] - hr * hsy * 0.32, hr * hsz * 0.5], [hr * hsx * 0.44, hr * hsy * 0.4, hr * hsz * 0.46]);
+  P.add('head', G.sph, light, [0, hc[1] - hr * hsy * 0.52, hr * hsz * 0.38], [hr * hsx * 0.5, hr * hsy * 0.3, hr * hsz * 0.45]);
   // 眼睛
   const eyeR = hr * (sp.snout === 'horse' || sp.snout === 'broad' ? 0.15 : 0.17);
   for (const sd of [1, -1]) {
     const ep = [sd * hr * hsx * 0.4, hc[1] + hr * hsy * 0.18, hr * hsz * 0.8];
-    P.add('head', G.sphLo, '#ffffff', ep, [eyeR, eyeR * 1.1, eyeR * 0.8]);
-    P.add('head', G.sphLo, '#1a1410', [ep[0] + sd * eyeR * 0.05, ep[1], ep[2] + eyeR * 0.55], [eyeR * 0.6, eyeR * 0.7, eyeR * 0.4]);
+    P.add('head', G.sph, '#fbfaf6', ep, [eyeR, eyeR * 1.12, eyeR * 0.72]);
+    P.add('head', G.sph, sp.iris || '#3a2a1a', [ep[0] + sd * eyeR * 0.05, ep[1] - eyeR * 0.04, ep[2] + eyeR * 0.42], [eyeR * 0.66, eyeR * 0.74, eyeR * 0.36]);
+    P.add('head', G.sphLo, '#0e0a08', [ep[0] + sd * eyeR * 0.05, ep[1] - eyeR * 0.04, ep[2] + eyeR * 0.6], [eyeR * 0.36, eyeR * 0.42, eyeR * 0.2]);
+    P.add('head', G.sphLo, '#ffffff', [ep[0] + sd * eyeR * 0.22, ep[1] + eyeR * 0.28, ep[2] + eyeR * 0.72], [eyeR * 0.16, eyeR * 0.16, eyeR * 0.08]);
+    P.add('head', G.hemi, fur, [ep[0], ep[1] + eyeR * 0.15, ep[2] - eyeR * 0.05], [eyeR * 1.1, eyeR * 0.9, eyeR * 0.82], [0.5, 0, 0]);
     // 眉毛
     P.add('head', G.box, shade(fur, 0.6), [ep[0], ep[1] + eyeR * 1.4, ep[2] + eyeR * 0.1], [eyeR * 1.4, eyeR * 0.3, eyeR * 0.4], [0, 0, -sd * 0.15]);
     if (ex.has('mask')) P.add('head', G.sph, sp.mask, [ep[0] + sd * eyeR * 0.3, ep[1] - eyeR * 0.3, ep[2] - eyeR * 0.3], [eyeR * 1.6, eyeR * 1.3, eyeR * 0.9], [0, 0, sd * 0.5]);
@@ -456,8 +501,8 @@ function buildGeometry(key, sp, fur, light, ot) {
       break;
     case 'canine': {
       const ln = hr * (sp.snoutLen ?? 1.2);
-      P.add('head', G.cone, fur, [0, sy + hr * 0.08, sz * 0.7 + ln * 0.45], [hr * 0.42, ln, hr * 0.36], [Math.PI / 2, 0, 0]);
-      P.add('head', G.cone, light, [0, sy - hr * 0.08, sz * 0.62 + ln * 0.42], [hr * 0.4, ln * 0.95, hr * 0.28], [Math.PI / 2, 0, 0]);
+      P.add('head', G.muzzle, fur, [0, sy + hr * 0.06, sz * 0.62 + ln * 0.45], [hr * 0.44, ln, hr * 0.36], [Math.PI / 2, 0, 0]);
+      P.add('head', G.muzzle, light, [0, sy - hr * 0.1, sz * 0.58 + ln * 0.42], [hr * 0.4, ln * 0.94, hr * 0.26], [Math.PI / 2, 0, 0]);
       P.add('head', G.sphLo, nose, [0, sy + hr * 0.12, sz * 0.7 + ln * 0.95], [hr * 0.12, hr * 0.1, hr * 0.1]);
       break;
     }
@@ -468,8 +513,8 @@ function buildGeometry(key, sp, fur, light, ot) {
       break;
     case 'horse': {
       const sc = sp.snoutCol || light;
-      P.add('head', G.sph, fur, [0, sy + hr * 0.05, sz * 0.75], [hr * 0.5 * hsx, hr * 0.5, hr * 0.9]);
-      P.add('head', G.sph, sc, [0, sy - hr * 0.1, sz * 1.45], [hr * 0.5 * hsx, hr * 0.45, hr * 0.42]);
+      P.add('head', G.muzzle, fur, [0, sy + hr * 0.02, sz * 0.62 + hr * 0.55], [hr * 0.56 * hsx, hr * 1.25, hr * 0.5], [Math.PI / 2 + 0.12, 0, 0]);
+      P.add('head', G.sphHi, sc, [0, sy - hr * 0.12, sz * 1.42], [hr * 0.48 * hsx, hr * 0.42, hr * 0.44]);
       for (const sd of [1, -1]) P.add('head', G.sphLo, '#1a1410', [sd * hr * 0.2, sy - hr * 0.02, sz * 1.82], [hr * 0.08, hr * 0.06, hr * 0.05]);
       break;
     }
@@ -491,7 +536,7 @@ function buildGeometry(key, sp, fur, light, ot) {
       break;
     case 'pointy': {
       const ln = hr * (sp.snoutLen ?? 0.9);
-      P.add('head', G.cone, fur, [0, sy, sz * 0.7 + ln * 0.45], [hr * 0.38, ln, hr * 0.3], [Math.PI / 2, 0, 0]);
+      P.add('head', G.muzzle, fur, [0, sy, sz * 0.66 + ln * 0.45], [hr * 0.4, ln, hr * 0.32], [Math.PI / 2, 0, 0]);
       P.add('head', G.sphLo, nose, [0, sy, sz * 0.7 + ln * 0.95], [hr * 0.09, hr * 0.08, hr * 0.08]);
       break;
     }
@@ -511,7 +556,7 @@ function buildGeometry(key, sp, fur, light, ot) {
       const pts = [[0, sy + hr * 0.05, sz * 0.82], [0, sy - hr * 0.35, sz * 1.05], [0, sy - hr * 0.85, sz * 1.12], [0, sy - hr * 1.3, sz * 1.05], [0, sy - hr * 1.65, sz * 1.15], [0, sy - hr * 1.85, sz * 1.38]];
       for (let i = 0; i < pts.length - 1; i++) {
         const rad = hr * (0.3 - i * 0.04);
-        P.between('head', G.sph, fur, pts[i], pts[i + 1], rad, 0.62);
+        P.between('head', G.cap, fur, pts[i], pts[i + 1], rad, 1.25);
       }
       P.add('head', G.cyl, shade(fur, 0.8), pts[pts.length - 1], [hr * 0.1, hr * 0.06, hr * 0.1], [-0.9, 0, 0]);
       break;
@@ -531,19 +576,25 @@ function buildGeometry(key, sp, fur, light, ot) {
     switch (sp.ears) {
       case 'long': {
         const ln = hr * sp.earLen;
-        P.along('head', G.sph, fur, [sd * hr * 0.35, topY - hr * 0.15, -hr * 0.1], ln, hr * 0.22, hr * 0.09, [-0.12, 0, -sd * 0.15]);
-        P.along('head', G.sph, inner, [sd * hr * 0.35, topY - hr * 0.05, -hr * 0.03], ln * 0.85, hr * 0.13, hr * 0.05, [-0.12, 0, -sd * 0.15]);
+        P.along('head', G.leaf, fur, [sd * hr * 0.35, topY - hr * 0.15, -hr * 0.1], ln, hr * 0.24, hr * 0.09, [-0.12, 0, -sd * 0.15]);
+        P.along('head', G.leaf, inner, [sd * hr * 0.35, topY - hr * 0.02, -hr * 0.02], ln * 0.84, hr * 0.15, hr * 0.045, [-0.12, 0, -sd * 0.15]);
         break;
       }
       case 'pointy': {
         const ln = hr * sp.earLen;
-        P.along('head', G.cone, fur, [sd * hr * 0.5, ey, -hr * 0.1], ln, hr * 0.32, hr * 0.12, [-0.1, 0, -sd * 0.3]);
-        P.along('head', G.cone, inner, [sd * hr * 0.5, ey, -hr * 0.03], ln * 0.8, hr * 0.2, hr * 0.06, [-0.1, 0, -sd * 0.3]);
-        if (sp.dark) P.along('head', G.cone, sp.dark, [sd * (hr * 0.5 + Math.sin(sd * 0.3) * ln * 0.62), ey + ln * 0.62 * Math.cos(0.3), -hr * 0.1 - ln * 0.06], ln * 0.4, hr * 0.14, hr * 0.13, [-0.1, 0, -sd * 0.3]);
+        // 三角耳：底宽、尖端圆钝；内耳浅色；耳尖深色（与耳朵同一轴线，不会悬空）
+        const eln = ln * 0.55, rot = [-0.1, 0, -sd * 0.3];
+        P.along('head', G.muzzle, fur, [sd * hr * 0.5, ey, -hr * 0.1], eln, hr * 0.36, hr * 0.13, rot);
+        P.along('head', G.muzzle, inner, [sd * hr * 0.5, ey + eln * 0.06, -hr * 0.02], eln * 0.72, hr * 0.22, hr * 0.06, rot);
+        if (sp.dark) {
+          const tq = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot, 'XYZ'));
+          const tip = new THREE.Vector3(0, eln * 0.62, 0).applyQuaternion(tq);
+          P.along('head', G.muzzle, sp.dark, [sd * hr * 0.5 + tip.x, ey + tip.y, -hr * 0.1 + tip.z], eln * 0.4, hr * 0.2, hr * 0.135, rot);
+        }
         break;
       }
       case 'horse':
-        P.along('head', G.cone, fur, [sd * hr * 0.45, ey, -hr * 0.15], hr * 1.0, hr * 0.25, hr * 0.12, [-0.1, 0, -sd * 0.45]);
+        P.along('head', G.leaf, fur, [sd * hr * 0.45, ey, -hr * 0.15], hr * 1.0, hr * 0.26, hr * 0.12, [-0.1, 0, -sd * 0.45]);
         break;
       case 'round':
         P.add('head', G.sph, fur, [sd * hr * 0.62 * hsx, ey + hr * 0.12, -hr * 0.1], [hr * 0.28, hr * 0.28, hr * 0.1], [0, 0, -sd * 0.4]);
@@ -572,9 +623,9 @@ function buildGeometry(key, sp, fur, light, ot) {
   // 头部特征
   if (ex.has('mane')) {
     const mc = sp.mane;
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      P.add('head', G.sph, mc, [Math.sin(a) * hr * 0.95, hc[1] + Math.cos(a) * hr * 0.95, -hr * 0.35], [hr * 0.55, hr * 0.55, hr * 0.5]);
+    for (let ring = 0; ring < 2; ring++) for (let i = 0; i < 16; i++) {
+      const a = (i / 16 + ring * 0.03) * Math.PI * 2, R = hr * (1.0 + ring * 0.22);
+      P.add('head', G.sph, ring ? shade(mc, 0.85) : mc, [Math.sin(a) * R, hc[1] + Math.cos(a) * R * 0.95, -hr * (0.3 + ring * 0.18)], [hr * 0.42, hr * 0.5, hr * 0.42], [0, 0, -a]);
     }
     P.add('head', G.sph, mc, [0, hc[1] - hr * 0.2, -hr * 0.6], [hr * 1.35, hr * 1.4, hr * 0.7]);
     P.add('head', G.sph, mc, [0, hc[1] + hr * 0.75, hr * 0.3], [hr * 0.45, hr * 0.3, hr * 0.45]);
@@ -618,11 +669,18 @@ function buildGeometry(key, sp, fur, light, ot) {
   // ---- 手臂 ----
   const sleeveUp = ot.sleeve === 'none' ? fur : (ot.outfit === 'worker' ? ot.top : ot.top);
   const sleeveLo = ot.sleeve === 'long' ? (ot.outfit === 'worker' ? ot.top : ot.top) : limbFur;
-  P.add('upperArm', G.sph, sleeveUp, [0, -upLen / 2, 0], [ar * 1.05, upLen / 2 + ar * 0.5, ar * 1.05]);
-  P.add('upperArm', G.sph, sleeveUp, [0, -ar * 0.2, 0], [ar * 1.25, ar * 1.2, ar * 1.25]); // 肩
-  P.add('lowerArm', G.sph, sleeveLo, [0, -loLen / 2, 0], [ar * 0.92, loLen / 2 + ar * 0.4, ar * 0.92]);
+  P.add('upperArm', G.arm, sleeveUp, [0, -upLen / 2, 0], [ar * 1.12, upLen + ar * 0.5, ar * 1.12], [Math.PI, 0, 0]);
+  P.add('upperArm', G.sph, sleeveUp, [0, -ar * 0.1, 0], [ar * 1.18, ar * 1.12, ar * 1.18]);           // 肩关节
+  P.add('lowerArm', G.sph, sleeveLo, [0, 0, 0], [ar * 0.98, ar * 0.98, ar * 0.98]);                    // 肘关节
+  P.add('lowerArm', G.arm, sleeveLo, [0, -loLen / 2, 0], [ar * 0.96, loLen + ar * 0.3, ar * 0.96], [Math.PI, 0, 0]);
+  if (ot.sleeve === 'long') P.add('lowerArm', G.cyl, shade(sleeveLo, 0.85), [0, -loLen * 0.92, 0], [ar * 0.98, ar * 0.35, ar * 0.98]); // 袖口
   const handCol = isHoof ? hoofCol : (sp.darkLimbs ? dark : fur);
-  P.add('lowerArm', G.sph, handCol, [0, -loLen - ar * 0.3, ar * 0.1], [ar * 1.1, ar * 1.25, ar * 0.95]);
+  // 手：掌 + 拇指 + 四指团
+  P.add('lowerArm', G.sph, handCol, [0, -loLen - ar * 0.32, ar * 0.08], [ar * 1.05, ar * 1.15, ar * 0.78]);
+  if (!isHoof && lod === 'hi') {
+    P.add('lowerArm', G.cap, handCol, [ar * 0.7, -loLen - ar * 0.2, ar * 0.45], [ar * 0.32, ar * 0.9, ar * 0.32], [0.6, 0, -0.5]);
+    for (let f = -1; f <= 1; f++) P.add('lowerArm', G.cap, handCol, [f * ar * 0.45, -loLen - ar * 1.15, ar * 0.25], [ar * 0.3, ar * 0.9, ar * 0.3], [0.25, 0, f * 0.1]);
+  }
   if (ex.has('claws')) for (let i = -1; i <= 1; i++) P.along('lowerArm', G.cone4, '#e8e0cc', [i * ar * 0.5, -loLen - ar * 1.2, ar * 0.3], ar * 1.4, ar * 0.15, ar * 0.15, [Math.PI - 0.4, 0, 0]);
   if (stripe && ot.sleeve !== 'long') for (let i = 0; i < 3; i++) {
     const f = -0.5 + (i + 0.5) / 3 * 0.9; const hl = loLen / 2 + ar * 0.4;
@@ -636,8 +694,11 @@ function buildGeometry(key, sp, fur, light, ot) {
   // ---- 腿 ----
   const thighCol = ot.outfit === 'dress' ? limbFur : ot.pants;
   const shinCol = (ot.outfit === 'dress' || ot.shorts) ? limbFur : ot.pants;
-  P.add('thigh', G.sph, thighCol, [0, -legSeg / 2, 0], [lr, legSeg / 2 + lr * 0.4, lr]);
-  P.add('shin', G.sph, shinCol, [0, -legSeg / 2, 0], [lr * 0.82, legSeg / 2 + lr * 0.3, lr * 0.82]);
+  P.add('thigh', G.thighShape, thighCol, [0, -legSeg / 2, 0], [lr * 1.05, legSeg + lr * 0.6, lr * 1.05], [Math.PI, 0, 0]);
+  P.add('thigh', G.sph, thighCol, [0, 0, 0], [lr * 1.02, lr * 0.95, lr * 1.02]);                        // 髋关节
+  P.add('shin', G.sph, shinCol, [0, 0, 0], [lr * 0.84, lr * 0.84, lr * 0.84]);                           // 膝关节
+  P.add('shin', G.calf, shinCol, [0, -legSeg / 2, 0], [lr * 0.86, legSeg + lr * 0.3, lr * 0.86], [Math.PI, 0, 0]);
+  if (ot.outfit !== 'dress' && !ot.shorts) P.add('shin', G.cyl, shade(shinCol, 0.88), [0, -legSeg * 0.93, 0], [lr * 0.76, lr * 0.3, lr * 0.76]); // 裤脚
   if (ot.shorts) P.add('thigh', G.cyl, ot.pants, [0, -legSeg * 0.85, 0], [lr * 0.95, lr * 0.5, lr * 0.95]);
   if (stripe && (ot.outfit === 'dress' || ot.shorts)) for (let i = 0; i < 3; i++) {
     const f = -0.5 + (i + 0.5) / 3 * 0.9;
@@ -646,11 +707,15 @@ function buildGeometry(key, sp, fur, light, ot) {
   // 脚（挂在小腿下，脚踝 y = -legSeg）
   const ay = -legSeg;
   if (sp.feet === 'hoof') {
-    P.add('shin', G.cyl, hoofCol, [0, ay - footH * 0.3, lr * 0.15], [lr * 0.85, footH * 1.4, lr * 0.95]);
+    P.add('shin', G.frustum, hoofCol, [0, ay - footH * 0.3, lr * 0.12], [lr * 0.92, footH * 1.6, lr * 1.0]);
+    P.add('shin', G.box, shade(hoofCol, 0.6), [0, ay - footH * 0.3, lr * 0.95], [lr * 0.08, footH * 1.5, lr * 0.3]);   // 蹄缝
   } else {
     const flen = sp.feet === 'big' ? 0.24 : 0.13;
     const fcol = ot.outfit === 'suit' ? '#1a1a1a' : (sp.darkLimbs ? dark : fur);
-    P.add('shin', G.sph, fcol, [0, ay - footH * 0.25, flen * 0.32], [lr * 0.85, footH * 0.95, flen * 0.55]);
+    P.add('shin', G.sph, fcol, [0, ay - footH * 0.1, 0], [lr * 0.72, footH * 1.3, lr * 0.75]);                   // 脚跟
+    P.add('shin', G.sphHi, fcol, [0, ay - footH * 0.3, flen * 0.35], [lr * 0.85, footH * 0.95, flen * 0.52]);    // 前掌
+    if (ot.outfit !== 'suit' && lod === 'hi') for (let t = -1; t <= 1; t++) P.add('shin', G.sph, fcol, [t * lr * 0.42, ay - footH * 0.45, flen * 0.82], [lr * 0.26, footH * 0.7, lr * 0.32]);
+    else P.add('shin', G.sphHi, '#101010', [0, ay - footH * 0.55, flen * 0.3], [lr * 0.9, footH * 0.5, flen * 0.62]);   // 鞋底
   }
 
   // ---- 尾巴（挂在胯后方，沿 +Y 建，骨骼旋转使其朝后下方） ----
@@ -658,25 +723,24 @@ function buildGeometry(key, sp, fur, light, ot) {
   switch (sp.tail) {
     case 'puff': P.add('tail', G.sph, sp.wool || '#f4f2f0', [0, 0.02, 0], [0.05, 0.05, 0.05]); break;
     case 'bushy':
-      P.along('tail', G.sph, fur, [0, 0, 0], 0.22, 0.055, 0.06, [0, 0, 0]);
-      P.along('tail', G.sph, fur, [0, 0.12, 0], 0.22, 0.08, 0.085, [0.2, 0, 0]);
-      P.along('tail', G.sph, light, [0, 0.3, 0.035], 0.12, 0.055, 0.06, [0.35, 0, 0]);
+      P.along('tail', G.leaf, fur, [0, -0.02, 0], 0.42, 0.085, 0.09, [0.12, 0, 0]);
+      P.along('tail', G.leaf, light, [0, 0.27, 0.03], 0.16, 0.06, 0.065, [0.3, 0, 0]);
       break;
     case 'long': {
       const k = sp.tailThick ?? 1;
-      P.along('tail', G.sph, fur, [0, 0, 0], 0.3, 0.02 * k, 0.02 * k, [0, 0, 0]);
-      P.along('tail', G.sph, stripe ? stripe : fur, [0, 0.27, 0], 0.18, 0.017 * k, 0.017 * k, [0.6, 0, 0]);
+      P.along('tail', G.cap, fur, [0, 0, 0], 0.32, 0.022 * k, 0.022 * k, [0, 0, 0]);
+      P.along('tail', G.cap, stripe ? stripe : fur, [0, 0.29, 0], 0.2, 0.018 * k, 0.018 * k, [0.6, 0, 0]);
       if (stripe) for (let i = 0; i < 3; i++) P.add('tail', G.cylLo, stripe, [0, 0.06 + i * 0.07, 0], [0.021 * k, 0.012, 0.021 * k]);
       if (spot) for (let i = 0; i < 3; i++) P.add('tail', G.cylLo, spot, [0, 0.06 + i * 0.07, 0], [0.021 * k, 0.01, 0.021 * k]);
       break;
     }
     case 'thin':
-      P.along('tail', G.cyl, tc, [0, 0, 0], 0.32, 0.012, 0.012, [0, 0, 0]);
-      P.along('tail', G.cyl, tc, [0, 0.31, 0], 0.22, 0.008, 0.008, [0.7, 0, 0]);
+      P.along('tail', G.cap, tc, [0, 0, 0], 0.33, 0.012, 0.012, [0, 0, 0]);
+      P.along('tail', G.cap, tc, [0, 0.31, 0], 0.23, 0.008, 0.008, [0.7, 0, 0]);
       break;
     case 'tuft':
-      P.along('tail', G.cyl, fur, [0, 0, 0], 0.22, 0.012, 0.012, [0, 0, 0]);
-      P.add('tail', G.sph, sp.tuft || dark, [0, 0.24, 0], [0.025, 0.045, 0.025]);
+      P.along('tail', G.cap, fur, [0, 0, 0], 0.24, 0.013, 0.013, [0, 0, 0]);
+      P.add('tail', G.leaf, sp.tuft || dark, [0, 0.27, 0], [0.03, 0.09, 0.03]);
       break;
     case 'flat':
       P.along('tail', G.sph, tc, [0, 0, 0], 0.26, 0.07, 0.022, [0, 0, 0]);
@@ -700,7 +764,7 @@ const _geoCache = new Map();
 /**
  * 创建一个动物 NPC。
  * @param {string} species SPECIES 中的 key
- * @param {{color?:string|number, outfit?:'casual'|'suit'|'police'|'worker'|'dress', outfitColor?:string|number, seed?:number}} opts
+ * @param {{color?:string|number, outfit?:'casual'|'suit'|'police'|'worker'|'dress', outfitColor?:string|number, seed?:number, detail?:'hi'|'lo'}} opts
  */
 export function createAnimal(species, opts = {}) {
   const sp = SP[species] || SP.rabbit;
@@ -716,9 +780,10 @@ export function createAnimal(species, opts = {}) {
   const outfitColor = opts.outfitColor != null ? '#' + new THREE.Color(opts.outfitColor).getHexString() : undefined;
   const ot = resolveOutfit(key, { ...opts, outfitColor }, r);
 
-  const ck = `${key}|${fur}|${light}|${JSON.stringify(ot)}`;
+  const lod = opts.detail === 'lo' ? 'lo' : 'hi';
+  const ck = `${key}|${fur}|${light}|${JSON.stringify(ot)}|${lod}`;
   let built = _geoCache.get(ck);
-  if (!built) { built = buildGeometry(key, sp, fur, light, ot); _geoCache.set(ck, built); }
+  if (!built) { built = buildGeometry(key, sp, fur, light, ot, lod); _geoCache.set(ck, built); }
   const { geos, dims } = built;
   const mat = npcMaterial();
   const mk = (bone) => {
