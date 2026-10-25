@@ -91,7 +91,7 @@ export function build(ctx) {
   const RX = [...D.roadsX], RZ = [...D.roadsZ];
   const nearRX = (x, m) => RX.some(r => Math.abs(x - r) < m);
   const nearRZ = (z, m) => RZ.some(r => Math.abs(z - r) < m);
-  const ASPH = 0x5a524a, YEL = 0xf2c230, WHT = 0xf4f0e6;
+  const ASPH = 0x3f4248, YEL = 0xf2c230, WHT = 0xf4f0e6;
   for (const x of RX) {
     b.box(ROAD_W, 0.02, rect.z1 - rect.z0, x, 0, (rect.z0 + rect.z1) / 2, ASPH, { shadow: false });
     for (let z = rect.z0 + 3; z < rect.z1 - 3; z += 6) {

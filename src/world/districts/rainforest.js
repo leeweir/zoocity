@@ -119,11 +119,11 @@ export function build(ctx) {
   b.box(R.x1 - TUNDRA_X, 0.012, R.z1 - TUNDRA_Z, (TUNDRA_X + R.x1) / 2, 0, (TUNDRA_Z + R.z1) / 2, GROUND, { jitter: 0.1 });
 
   // ================= 道路（湿润沥青） =================
-  const ASPH = 0x2b2f33;
+  const ASPH = 0x3f4248;
   // 与冰川镇重叠区内（x>-700, z<-330）的南北路段由冰川镇负责，这里从 z=-330 开始画
   for (const x of D.roadsX) {
     const rz0 = x > TUNDRA_X ? TUNDRA_Z : R.z0;
-    b.box(ROAD_W, 0.022, R.z1 - rz0, x, 0, (rz0 + R.z1) / 2, ASPH, { mat: 'shiny', shadow: false });
+    b.box(ROAD_W, 0.022, R.z1 - rz0, x, 0, (rz0 + R.z1) / 2, ASPH, { shadow: false });
     for (let z = rz0 + 3; z < R.z1 - 5; z += 9) {
       if (D.roadsZ.some(zr => Math.abs(z + 2 - zr) < HW + 3)) continue;
       b.box(0.25, 0.012, 4, x, 0.022, z + 2, 0xf2c94c, { shadow: false });
@@ -133,7 +133,7 @@ export function build(ctx) {
   const GATE_Z = D.roadsZ.filter(z => z > TUNDRA_Z + 12);
   for (const z of D.roadsZ) {
     const rx1 = GATE_Z.includes(z) ? R.x1 : WALL_X0;
-    b.box(rx1 - R.x0, 0.022, ROAD_W, (R.x0 + rx1) / 2, 0, z, ASPH, { mat: 'shiny', shadow: false });
+    b.box(rx1 - R.x0, 0.022, ROAD_W, (R.x0 + rx1) / 2, 0, z, ASPH, { shadow: false });
     for (let x = R.x0 + 3; x < rx1 - 5; x += 9) {
       if (D.roadsX.some(xr => Math.abs(x + 2 - xr) < HW + 3)) continue;
       b.box(4, 0.012, 0.25, x + 2, 0.022, z, 0xf2c94c, { shadow: false });

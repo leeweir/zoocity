@@ -259,7 +259,7 @@ export function createJudy() {
   const rig = { root, hips, torso, head, arms, legs, ears, tail: [tail], eyes };
   const anim = makeRigAnimator(rig, { hipY, legLen: hipY, scale: 1, sitY: 0.2, earFlop: 1.3, tailSway: 0.6, armOut: 0.04 });
   root.userData = {
-    name: 'Judy Hopps', height: 1.0, totalHeight: 1.35,
+    name: 'Judy Hopps', height: 1.0, totalHeight: 1.35, sitHipY: 0.2,
     bones: { hips, torso, neck, head, arms, legs, ears, tail: [tail] },
     update: anim.update, setPose: anim.setPose, getPose: anim.getPose,
   };
@@ -467,7 +467,7 @@ export function createNick() {
   const rig = { root, hips, torso, head, arms, legs, ears, tail: [tail0, tail1, tail2], eyes };
   const anim = makeRigAnimator(rig, { hipY, legLen: hipY, scale: NS, sitY: 0.27, earFlop: 0.6, tailSway: 0.9, armOut: 0.03 });
   root.userData = {
-    name: 'Nick Wilde', height: 1.17, totalHeight: 1.25,
+    name: 'Nick Wilde', height: 1.17, totalHeight: 1.25, sitHipY: 0.29,
     bones: { hips, torso, neck, head, arms, legs, ears, tail: [tail0, tail1, tail2] },
     update: anim.update, setPose: anim.setPose, getPose: anim.getPose,
     setSunglasses(on) { shades.visible = !!on; },

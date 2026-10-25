@@ -173,6 +173,9 @@ export class Audio {
       case 'fail': tone(300, 150, 0.5, 'sawtooth', 0.08); break;
       case 'ui': tone(1000, null, 0.04, 'sine', 0.06); break;
       case 'door': noise(500, 0.25, 0.18, 'lowpass'); tone(180, 120, 0.2, 'triangle', 0.1, 0.05); break;
+      case 'splash': noise(900, 0.5, 0.25, 'lowpass'); noise(3000, 0.3, 0.12, 'highpass'); break;
+      case 'stroke': noise(700, 0.18, 0.07, 'bandpass', 0.8); break;
+      case 'bell': tone(2400, null, 0.12, 'triangle', 0.08); tone(2400, null, 0.14, 'triangle', 0.06, 0.16); break;
       case 'honk': tone(392, null, 0.35, 'square', 0.08); tone(494, null, 0.35, 'square', 0.06); break;
     }
   }

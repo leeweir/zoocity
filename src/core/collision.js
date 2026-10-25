@@ -30,7 +30,10 @@ export class Colliders {
     return c;
   }
 
-  box(cx, cz, w, d, { ry = 0, yMin = 0, yMax = 10, walkable = false } = {}) {
+  box(cx, cz, w, d, { ry = 0, yMin = 0, yMax = 10, walkable } = {}) {
+    // 默认：足够大的实体盒子（楼房、平台）顶面都可以站立——飞上屋顶不会掉下去。
+    // 细长的护栏/墙板（任一边 < 1.2m）不能站，避免卡在栏杆顶上。
+    if (walkable === undefined) walkable = w >= 1.2 && d >= 1.2;
     const cos = Math.cos(ry), sin = Math.sin(ry);
     const c = { type: 'box', cx, cz, hw: w / 2, hd: d / 2, cos, sin, yMin, yMax, walkable };
     const ex = Math.abs(cos) * c.hw + Math.abs(sin) * c.hd;
@@ -70,7 +73,8 @@ export class Colliders {
   }
 
   groundAt(x, z, y = 1e9, stepUp = 0.6) {
-    let g = 0;
+    // 基础地形高度（默认 0；运河等处由 baseGround 给出河床高度）
+    let g = this.baseGround ? this.baseGround(x, z) : 0;
     const lim = y + stepUp;
     for (const c of this._near(x, z)) {
       let top = null;

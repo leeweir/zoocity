@@ -161,7 +161,7 @@ export function build(ctx) {
   // 南北路 x=0
   for (const rx of D.roadsX) {
     const len = R.z1 - R.z0;
-    b.box(ROAD_W, 0.03, len, rx, 0, cz, C.dirt, { shadow: false });
+    b.box(ROAD_W, 0.03, len, rx, 0, cz, 0x3f4248, { shadow: false });
     for (const s of [-1, 1]) b.box(1.8, 0.02, len, rx + s * (hw + 0.9), 0, cz, C.gravel, { shadow: false });
     // 车辙（路口留空）
     const cuts = [R.z0, ...D.roadsZ.flatMap(z => [z - hw, z + hw]), R.z1].sort((a, c) => a - c);
@@ -177,7 +177,7 @@ export function build(ctx) {
     for (let i = 0; i < xs.length; i += 2) {
       const x0 = xs[i], x1 = xs[i + 1]; if (x1 - x0 < 2) continue;
       const mx = (x0 + x1) / 2, ln = x1 - x0;
-      b.box(ln, 0.03, ROAD_W, mx, 0, rz, C.dirt, { shadow: false });
+      b.box(ln, 0.03, ROAD_W, mx, 0, rz, 0x3f4248, { shadow: false });
       for (const s of [-1, 1]) b.box(ln, 0.02, 1.8, mx, 0, rz + s * (hw + 0.9), C.gravel, { shadow: false });
       for (const s of [-1, 1]) for (const o of [1.6, 4.6]) b.box(ln, 0.04, 0.9, mx, 0, rz + s * o, C.dirtD, { shadow: false });
       b.box(ln, 0.036, 0.8, mx, 0, rz, 0x9a9a5a, { shadow: false });
@@ -446,10 +446,35 @@ export function build(ctx) {
     for (let x = x0 + 0.5; x < x1; x += 3) b.box(0.12, 0.85, 0.12, x, 0.75, zc, 0x3d4a3a, { mat: 'metal' });
     b.box(len, 0.1, 0.12, mx, 1.55, zc, 0x3d4a3a, { mat: 'metal' });
     b.box(len, 0.06, 0.08, mx, 1.1, zc, 0x3d4a3a, { mat: 'metal' });
-    col.box(mx, zc, len, 1.6, { yMin: -3, yMax: 1.7 });
+    col.box(mx, zc, len, 1.6, { yMin: -3, yMax: 1.7, walkable: false });
   }
-  bankWall(R.x0, -WALL_X, -1); bankWall(WALL_X, R.x1, -1);
-  bankWall(R.x0, DOCK_X - 2.2, 1); bankWall(DOCK_X + 2.2, -WALL_X, 1); bankWall(WALL_X, R.x1, 1);
+  // 下水台阶：每隔一段在堤岸开口，台阶从岸边一路下到水下，可以下水游泳、也能游回来爬上岸
+  const STAIRS = [-420, -300, -60, 60, 180, 300, 420];
+  const SW_W = 4;
+  const bankSeg = (a, c, side) => {
+    let x = a;
+    for (const sx of STAIRS) { if (sx - SW_W / 2 > x && sx + SW_W / 2 < c) { bankWall(x, sx - SW_W / 2, side); x = sx + SW_W / 2; } }
+    if (c > x) bankWall(x, c, side);
+  };
+  bankSeg(R.x0, -WALL_X, -1); bankSeg(WALL_X, R.x1, -1);
+  bankSeg(R.x0, DOCK_X - 2.2, 1); bankSeg(DOCK_X + 2.2, -WALL_X, 1); bankSeg(WALL_X, R.x1, 1);
+  for (const sx of STAIRS) for (const side of [-1, 1]) {
+    const zEdge = side < 0 ? WATER.z0 : WATER.z1;
+    // 坡面：从岸上 y=0.15（z 在岸内 1m）到水下 y=-2.3（向水里伸 7m）
+    const zTop = zEdge - side * 1.0, zBot = zEdge + side * 7;
+    col.ramp(sx - SW_W / 2, zTop, sx + SW_W / 2, zBot, 0.15, -2.3, 'z');
+    const n = 9;
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n;
+      const z = zTop + (zBot - zTop) * (t0 + t1) / 2, y = 0.15 + (-2.3 - 0.15) * t1;
+      b.box(SW_W, 0.6, Math.abs(zBot - zTop) / n + 0.05, sx, y - 0.4, z, k % 2 ? C.stone : C.stoneD);
+    }
+    // 台阶两侧扶手
+    for (const dx of [-SW_W / 2 - 0.1, SW_W / 2 + 0.1]) {
+      b.box(0.1, 0.1, Math.abs(zBot - zTop) * 0.7, sx + dx, 0.9, zEdge + side * 1.8, 0x3d4a3a, { mat: 'metal', rx: side * 0.33 });
+      col.box(sx + dx, zEdge + side * 2.5, 0.25, Math.abs(zBot - zTop), { yMin: -3, yMax: 1.5 });
+    }
+  }
   // 岸边步道（北岸 z 281..290，南岸 z 410..419）
   for (const [z0, z1] of [[281, 290.4], [409.6, 419]]) {
     for (const [a, c] of [[R.x0, -WALL_X], [WALL_X, R.x1]]) b.box(c - a, 0.03, z1 - z0, (a + c) / 2, 0, (z0 + z1) / 2, 0xcfc4ae, { shadow: false });
@@ -555,7 +580,7 @@ export function build(ctx) {
       const za = zs[i], zb = zs[i + 1], ha = deckH(za), hb = deckH(zb), zm = (za + zb) / 2;
       col.ramp(-BH, za, BH, zb, ha, hb, 'z');
       sloped(BH * 2 + 2, 0.8, 0, za, zb, ha, hb, 0x8e8a84);                // 结构板
-      sloped(ROAD_W, 0.02, 0, za, zb, ha + 0.02, hb + 0.02, 0x4a4a4e, { shadow: false }); // 沥青
+      sloped(ROAD_W, 0.02, 0, za, zb, ha + 0.02, hb + 0.02, 0x3f4248, { shadow: false }); // 沥青
       for (const s of [-1, 1]) {
         sloped(BH - hw - 0.4, 0.02, s * (hw + (BH - hw - 0.4) / 2), za, zb, ha + 0.02, hb + 0.02, 0xc9b9a0, { shadow: false }); // 人行道
         sloped(0.15, 0.02, s * (hw - 0.3), za, zb, ha + 0.035, hb + 0.035, 0xf2f2f2, { shadow: false });

@@ -127,7 +127,7 @@ export function createEnvironment(scene, renderer, b) {
     const len = Math.hypot(c.x2 - c.x1, c.z2 - c.z1);
     const ry = Math.atan2(c.x2 - c.x1, c.z2 - c.z1);
     const mx = (c.x1 + c.x2) / 2, mz = (c.z1 + c.z2) / 2;
-    b.box(c.w, 0.04, len + 2, mx, 0, mz, 0x3b3d42, { ry, shadow: false });
+    b.box(c.w, 0.04, len + 2, mx, 0, mz, 0x3f4248, { ry, shadow: false });
     for (let s = -len / 2; s < len / 2; s += 6) {
       b.box(0.25, 0.02, 3, mx + Math.sin(ry) * s, 0.04, mz + Math.cos(ry) * s, 0xf2c94c, { ry, shadow: false, mat: 'glow' });
     }
@@ -212,6 +212,8 @@ export function createEnvironment(scene, renderer, b) {
   const POOL = { savanna: ['clear', 'clear', 'clear', 'rain'], tundra: ['snow', 'snow', 'clear'], sahara: ['clear', 'clear', 'sand'], rainforest: ['rain', 'rain', 'clear'], bunnyburrow: ['clear', 'clear', 'rain'], rodentia: ['clear', 'rain'] };
   let wCur = { ...WEATHER.clear };
   const sunDir = new THREE.Vector3();
+  const tmpL = new THREE.Vector3(), tmpF = new THREE.Vector3(), ORIGIN = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+  const lightBasis = new THREE.Matrix4(), lightInv = new THREE.Matrix4();
   let districtFog = new THREE.Color(0xcfe3f0);
 
   function setLamps(list) { lampSpots = list; }
@@ -228,8 +230,16 @@ export function createEnvironment(scene, renderer, b) {
     const dusk = THREE.MathUtils.smoothstep(0.35 - Math.abs(sunDir.y), 0, 0.35) * day;
 
     const lightDir = sunDir.y > 0 ? sunDir : tmpV.copy(sunDir).negate(); // 夜里用月光
-    sun.position.set(focus.x + lightDir.x * 300, focus.y + Math.abs(lightDir.y) * 300 + 20, focus.z + lightDir.z * 300);
-    sun.target.position.copy(focus);
+    // 阴影相机中心对齐到阴影贴图的像素网格：角色移动时阴影边缘不再“游动”闪烁
+    const ld = tmpL.set(lightDir.x, Math.abs(lightDir.y) + 0.07, lightDir.z).normalize();
+    lightBasis.lookAt(ld, ORIGIN, UP);                       // 光源朝向的正交基
+    const texel = (S * 2) / sun.shadow.mapSize.x;
+    tmpF.copy(focus).applyMatrix4(lightInv.copy(lightBasis).invert());
+    tmpF.x = Math.round(tmpF.x / texel) * texel; tmpF.y = Math.round(tmpF.y / texel) * texel;
+    tmpF.applyMatrix4(lightBasis);
+    sun.target.position.copy(tmpF);
+    sun.position.copy(tmpF).addScaledVector(ld, 320);
+    sun.target.updateMatrixWorld();
     sun.intensity = 2.8 * day + 0.55 * night;
     sun.color.setRGB(1, 0.92 - dusk * 0.25, 0.82 - dusk * 0.4);
     if (night > 0.5) sun.color.setRGB(0.6, 0.7, 1.0);

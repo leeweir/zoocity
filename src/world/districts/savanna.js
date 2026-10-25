@@ -170,7 +170,7 @@ export function build(ctx) {
   const isClear = (x, z, rad = 0.5) => CLEAR.every(c => Math.hypot(c.x - x, c.z - z) > c.r + rad);
 
   // ---------- 1. 道路：沥青、车道线、斑马线 ----------
-  const ASPH = 0x4a4d52, LINE_W = 0xf2f2f2, LINE_Y = 0xf2c230;
+  const ASPH = 0x3f4248, LINE_W = 0xf2f2f2, LINE_Y = 0xf2c230;
   const vRoads = D.roadsX.map(c => ({ v: true, c, a0: RECT.z0, a1: RECT.z1 }));
   const hRoads = D.roadsZ.map(c => ({ v: false, c, a0: RECT.x0, a1: RECT.x1 }));
   const allR = [...vRoads, ...hRoads, ...ACCESS];

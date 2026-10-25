@@ -50,6 +50,9 @@ export const DISTRICTS = {
 
 // 运河：撒瓦纳中央区与兔窝镇之间的水域
 export const WATER = { z0: 292, z1: 408 };
+// 水面与河床高度（米）
+export const WATER_Y = -0.6, RIVERBED_Y = -2.6;
+export function inCanal(x, z) { return z > WATER.z0 + 0.6 && z < WATER.z1 - 0.6; }
 // 跨河大桥沿 x=0
 export const BRIDGE = { x: 0, z0: 280, z1: 420, w: 18 };
 

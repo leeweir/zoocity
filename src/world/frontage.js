@@ -28,7 +28,7 @@ export function buildFrontage(ctx) {
     const mx = (c.x1 + c.x2) / 2, mz = (c.z1 + c.z2) / 2;
     const ry = Math.atan2(c.x2 - c.x1, c.z2 - c.z1);
     b.box(w + 2, 0.02, len + w, mx, 0, mz, 0x8f8a7c, { ry, shadow: false, keep: true });
-    b.box(w, 0.03, len + w * 0.6, mx, 0.005, mz, 0x3b3d42, { ry, shadow: false, keep: true });
+    b.box(w, 0.03, len + w * 0.6, mx, 0.005, mz, 0x3f4248, { ry, shadow: false, keep: true });
     if (c.name) {
       // 主辅路：黄中线 + 路边白线
       for (let s = -len / 2 + 4; s < len / 2 - 4; s += 9) {

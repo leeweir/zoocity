@@ -14,6 +14,7 @@ import { buildFrontage, frontageReject } from './world/frontage.js';
 import { buildInteriors, interiorAt, INTERIORS } from './world/interiors.js';
 import { Player, ThirdPersonCamera } from './game/player.js';
 import { Vehicle, Traffic, createCarModel } from './game/vehicles.js';
+import { spawnRides } from './game/rides.js';
 import { Crowd, ambientLine, iconOf } from './game/npcs.js';
 import { Interactions } from './game/interact.js';
 import { Detective } from './game/detective.js';
@@ -27,7 +28,8 @@ const districtModules = import.meta.glob('./world/districts/*.js');
 
 // —— 渲染器 ——
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// 对数深度缓冲：大场景 + 高空俯视时，贴得很近的面（路面/车道线、屋顶/压顶）不再闪烁
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
 // 像素比由 Perf（自适应分辨率 + 画质档位）管理
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
@@ -35,7 +37,7 @@ renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, IS_TOUCH ? 2200 : 6000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.15, IS_TOUCH ? 2200 : 6000);
 const perf = new Perf(renderer, camera, { touch: IS_TOUCH });
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
@@ -46,6 +48,8 @@ ui.onType = () => audio.sfx('type');
 const input = new Input(canvas);
 ui.bindTouch(input);
 const col = new Colliders();
+// 运河处的基础地面 = 河床（低于水面），人会沉到水里游泳
+col.baseGround = (x, z) => layout.inCanal(x, z) ? layout.RIVERBED_Y : 0;
 const interact = new Interactions();
 const animators = [];
 const labels = [];
@@ -143,11 +147,14 @@ function makeCruisers() {
   }
 }
 
+let rides = [];
 function nearestCruiser(pos, maxD = 4) {
   let best = null, bd = maxD * maxD;
   for (const v of cruisers) { const d = v.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = v; } }
+  for (const v of rides) { const r = v.kind === 'car' ? maxD : 2.2; const d = v.pos.distanceToSquared(pos); if (d < r * r && d < bd) { bd = d; best = v; } }
   return best;
 }
+const rideName = v => v.label || (cruisers.includes(v) ? 'ZPD 警车' : '车');
 
 function travelTo(L) {
   const p = L.front || { x: L.x, z: L.z + L.d / 2 + 6 };
@@ -191,6 +198,8 @@ async function init() {
   cam.focus.copy(player.pos);
   cam.yaw = player.yaw + Math.PI;
   makeCruisers();
+  rides = spawnRides(scene, col, layout);
+  console.log(`[world] rides: ${rides.length}`);
   const Q = perf.q;
   traffic = new Traffic(scene, Math.round(80 * Q.traffic));
   traffic.addLoopCars(Math.round(26 * Q.traffic));
@@ -200,6 +209,7 @@ async function init() {
   cop = new TrafficCop({ scene, ui, traffic, player, crowd });
   detective.sfx = n => audio.sfx(n); cop.sfx = n => audio.sfx(n);
   detective.onTrafficDuty = () => cop.start();
+  player.onSwimChange = on => { if (on) { audio.sfx('splash'); ui.toast('🏊 游泳中 · Shift 加速 · 游到岸边台阶上岸，或按 G 用竹蜻蜓飞走', 2600); } };
   player.onFlyChange = on => { ui.toast(on ? '🚁 竹蜻蜓起飞！Space 上升 · C 下降 · Shift 加速 · G 降落' : '🚁 竹蜻蜓收起', 2200); audio?.copter(on); };
   minimap = new Minimap(ui, travelTo);
   setLoad('选择你的角色', 1);
@@ -344,7 +354,11 @@ function handleInput(dt) {
     if (player.vehicle) { player.exitVehicle(); audio.engine(false); audio.siren(false); audio.sfx('door'); }
     else { const v = nearestCruiser(player.pos); if (v) { player.enterVehicle(v); audio.sfx('door'); if (v.siren) audio.siren(true); } }
   }
-  if (input.hit('KeyH') && player.vehicle) { player.vehicle.siren = !player.vehicle.siren; audio.siren(player.vehicle.siren); }
+  if (input.hit('KeyH') && player.vehicle) {
+    const v = player.vehicle;
+    if (cruisers.includes(v)) { v.siren = !v.siren; audio.siren(v.siren); }
+    else audio.sfx(v.kind === 'bike' ? 'bell' : 'honk');
+  }
   if (input.hit('KeyT')) { if (cop.active) cop.stop('提前下班'); else cop.start(); }
   if (input.hit('KeyE') && cop.tryTicket()) return;
   if (input.hit('KeyE') && !player.vehicle) {
@@ -432,11 +446,12 @@ function loop() {
     detective.update(dt, t, player.pos);
     cop.update(dt, t);
     for (const v of cruisers) if (v !== player.vehicle) v.update(dt, 0);
+    for (const v of rides) if (v !== player.vehicle && v.speed !== 0) { v.speed *= 0.9; if (Math.abs(v.speed) < 0.05) v.speed = 0; v.update(dt, 0); }
     perf.update(dt, player.pos);
     env.state.interior = insideName;
     env.update(dt, player.pos, dk, { cam: camera.position, siren: [...cruisers].find(v => v.siren)?.pos });
     // 声音：脚步（按步频）、引擎、环境与音乐
-    if (player.vehicle) audio.engine(true, player.vehicle.speed);
+    if (player.vehicle) audio.engine(player.vehicle.kind !== 'bike', player.vehicle.speed);
     if (!player.vehicle && player.onGround && !player.flying) {
       const hs = Math.hypot(player.vel.x, player.vel.z);
       stepAcc += hs * dt;
@@ -455,7 +470,10 @@ function loop() {
     if (!ui.inDialog && !ui.modalOpen) {
       const offV = player.vehicle && cop.nearest();
       if (offV) { prompt = `<kbd>E</kbd> 拦停开罚单：${offV.offense.icon} ${offV.offense.name}`; act = '罚单'; }
-      else if (player.vehicle) prompt = IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`;
+      else if (player.vehicle) prompt = player.onTwoWheels
+        ? (IS_TOUCH ? `骑行中 · ${rideName(player.vehicle)}` : `<kbd>F</kbd> 下车 · <kbd>Shift</kbd> 加速${player.vehicle.kind === 'bike' ? ' · <kbd>H</kbd> 打铃' : ''}`)
+        : cruisers.includes(player.vehicle) ? (IS_TOUCH ? '摇杆驾驶 · 🚨 警笛' : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 警笛 · <kbd>Shift</kbd> 加速`)
+        : (IS_TOUCH ? `驾驶 ${rideName(player.vehicle)}` : `<kbd>F</kbd> 下车 · <kbd>H</kbd> 鸣笛 · <kbd>Shift</kbd> 加速`);
       else if (player.flying) prompt = IS_TOUCH ? '🚁 飞行中 · ⬆/⬇ 升降 · 🚁 降落' : '🚁 飞行中 · <kbd>Space</kbd> 上升 · <kbd>C</kbd> 下降 · <kbd>Shift</kbd> 加速 · <kbd>G</kbd> 降落';
       else {
         const it = interact.nearest(player.pos);
@@ -463,7 +481,7 @@ function loop() {
         const off = cop.nearest();
         if (off) { prompt = `<kbd>E</kbd> 开罚单：${off.offense.icon} ${off.offense.name}`; act = '罚单'; }
         else if (it) { prompt = `<kbd>E</kbd> ${esc(it.label)}`; act = it.label.startsWith('调查') ? '调查' : '对话'; }
-        else if (car) prompt = `<kbd>F</kbd> 驾驶 ZPD 警车`;
+        else if (car) { const v = nearestCruiser(player.pos); prompt = `<kbd>F</kbd> ${v.kind === 'bike' ? '骑' : '驾驶'} ${rideName(v)}`; }
         else if (crowd.nearest(player.pos)) { prompt = `<kbd>E</kbd> 打个招呼`; act = '招呼'; }
       }
     }
@@ -492,4 +510,4 @@ function loop() {
 init().catch(e => { console.error(e); setLoad('加载失败：' + e.message, 1); });
 
 // 调试接口
-window.__zoo = { audio, perf, get cop() { return cop; }, get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };
+window.__zoo = { audio, perf, get rides() { return rides; }, get cop() { return cop; }, get player() { return player; }, get detective() { return detective; }, get cam() { return cam; }, get traffic() { return traffic; }, get crowd() { return crowd; }, env, scene, col, renderer, travelTo, LANDMARKS };

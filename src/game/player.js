@@ -1,5 +1,6 @@
 // 玩家控制：第三人称移动、跳跃、冲刺、竹蜻蜓飞行、角色切换（朱迪 / 尼克）、驾驶警车
 import * as THREE from 'three';
+import { inCanal, WATER_Y } from '../world/layout.js';
 
 const HEROES = {
   judy: { name: '朱迪·霍普斯', walk: 3.2, run: 8.5, jump: 7.2, radius: 0.32, height: 1.3, camDist: 4.2 },
@@ -80,6 +81,7 @@ export class Player {
       let d = targetYaw - this.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       this.yaw += d * Math.min(1, dt * 12);
       if (this.flying) speed = sprint ? 30 : 14;      // 竹蜻蜓：水平飞行速度
+      else if (this.swimming) speed = sprint ? 3.6 : 2.2;   // 游泳
       const accel = this.flying ? 3.5 : this.onGround ? 14 : 4;
       this.vel.x += (wx * speed - this.vel.x) * Math.min(1, dt * accel);
       this.vel.z += (wz * speed - this.vel.z) * Math.min(1, dt * accel);
@@ -92,7 +94,8 @@ export class Player {
 
     // 竹蜻蜓：G 键（或触屏🚁按钮）开 / 关；也可在空中连按两次跳跃起飞
     if (!this.frozen && input.hit('KeyG')) this.setFlying(!this.flying);
-    if (input.hit('Space') && !this.frozen && !this.flying) {
+    if (input.hit('Space') && !this.frozen && !this.flying && this.swimming) { this.vel.y = 3.2; }   // 水里按跳：扑腾一下
+    else if (input.hit('Space') && !this.frozen && !this.flying) {
       if (this.onGround) { this.vel.y = S.jump; this.onGround = false; this._airJumpT = 0.45; }
       else if (this._airJumpT > 0) this.setFlying(true);
     }
@@ -105,6 +108,10 @@ export class Player {
       const climb = sprint ? 16 : 9;
       this.vel.y += (vy * climb - this.vel.y) * Math.min(1, dt * (vy ? 4 : 9));
       if (this.pos.y > 220 && this.vel.y > 0) this.vel.y = 0;
+    } else if (this.swimming) {
+      // 浮力：把身体拉回水面（头和肩露出水面）
+      const target = WATER_Y - (this.stats.height * 0.55);
+      this.vel.y += ((target - this.pos.y) * 6 - this.vel.y * 2.5) * dt * 2 - 4 * dt;
     } else this.vel.y -= 22 * dt;
     this.pos.addScaledVector(this.vel, dt);
     const g = this.col.resolve(this.pos, S.radius, S.height, 0.6);
@@ -118,6 +125,11 @@ export class Player {
       this.pos.y = g; // 贴地下台阶
     } else { this.onGround = false; this._landT = 0; }
     if (this.pos.y < -20) { this.pos.y = 5; }
+    // 进入运河：水面以下就是游泳；飞行时不算
+    const wasSwim = this.swimming;
+    this.swimming = !this.flying && !this.vehicle && inCanal(this.pos.x, this.pos.z) && this.pos.y < WATER_Y + 0.2;
+    if (this.swimming) { this.onGround = false; this.stamina = Math.min(1, this.stamina); }
+    if (this.swimming !== wasSwim) this.onSwimChange?.(this.swimming);
 
     const hs = Math.hypot(this.vel.x, this.vel.z);
     this.root.position.copy(this.pos);
@@ -137,7 +149,7 @@ export class Player {
     } else { this.model.rotation.set(0, 0, 0); this.model.position.y = 0; }
     this._lastYaw = this.yaw;
     const ud = this.model.userData;
-    ud.setPose?.(this.flying ? 'jump' : !this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
+    ud.setPose?.(this.swimming ? 'swim' : this.flying ? 'jump' : !this.onGround ? 'jump' : hs > 0.2 ? (hs > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
     ud.update?.(dt, this.onGround && !this.flying ? hs : 0);
     this._updateBuddy(dt);
     return hs;
@@ -172,7 +184,8 @@ export class Player {
     const g = this.col.resolve(p, 0.3, 1.2, 0.8);
     this.buddyPos.x = p.x; this.buddyPos.z = p.z;
     // 飞行时伙伴高度跟随玩家（不低于地面），否则落地
-    const ty = this.flying ? Math.max(g, this.pos.y + 0.8) : g;
+    const bSwim = !this.flying && inCanal(this.buddyPos.x, this.buddyPos.z) && g < WATER_Y;
+    const ty = this.flying ? Math.max(g, this.pos.y + 0.8) : bSwim ? WATER_Y - 0.7 : g;
     this.buddyPos.y += (ty - this.buddyPos.y) * Math.min(1, dt * (this.flying ? 3 : 10));
     this.buddy.position.copy(this.buddyPos);
     if (!this.buddyCopter) { this.buddyCopter = makeCopter(); this.buddy.add(this.buddyCopter); }
@@ -180,20 +193,29 @@ export class Player {
     this.buddyCopter.position.y = (this.models[this.buddyKey].userData.totalHeight || this.models[this.buddyKey].userData.height || 1.3) + 0.06;
     this.buddyCopter.userData.blades.rotation.y += dt * 38;
     this.buddy.rotation.y = this.buddyYaw;
-    this.buddy.visible = !this.vehicle;
+    this.buddy.visible = !this.vehicle || this.onTwoWheels;
     const m = this.models[this.buddyKey].userData;
-    m.setPose?.(this.flying ? 'jump' : sp > 0.2 ? (sp > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
+    m.setPose?.(bSwim ? 'swim' : this.flying ? 'jump' : sp > 0.2 ? (sp > 5 ? 'run' : 'walk') : (this.talking ? 'talk' : 'idle'));
     m.update?.(dt, this.flying ? 0 : sp);
   }
 
   // —— 驾驶 ——
+  get onTwoWheels() { return this.vehicle && (this.vehicle.kind === 'bike' || this.vehicle.kind === 'scooter'); }
+
   enterVehicle(v) {
+    if (this.flying) this.setFlying(false);
     this.vehicle = v; v.driver = this;
-    this.root.visible = false; this.buddy.visible = false;
-    v.speed = 0;
+    v.speed = 0; v.parked = false;
+    if (v.kind === 'bike' || v.kind === 'scooter') {
+      // 两轮车：角色骑在车上（伙伴跑步跟随）
+      this.root.visible = false;
+      v.mount(this.model);
+      this.model.visible = true;
+    } else { this.root.visible = false; this.buddy.visible = false; }
   }
   exitVehicle() {
     const v = this.vehicle; if (!v) return;
+    if (v.unmount) { const m = v.unmount(); this.root.add(m); m.position.set(0, 0, 0); m.rotation.set(0, 0, 0); }
     this.vehicle = null; v.driver = null;
     const side = new THREE.Vector3(Math.cos(v.yaw), 0, -Math.sin(v.yaw)).multiplyScalar(-2.2);
     this.pos.copy(v.pos).add(side); this.pos.y = this.col.groundAt(this.pos.x, this.pos.z, 50);
@@ -211,24 +233,37 @@ export class Player {
       if (Math.abs(mv.x) > 0.15) st = -Math.max(-1, Math.min(1, mv.x));
     }
     const boost = input.down('ShiftLeft') ? 1.5 : 1;
-    const maxF = 26 * boost, maxB = -8;
-    if (th > 0) v.speed += (v.speed < 0 ? 30 : 12) * dt;
+    const two = v.cfg;                          // 两轮车参数 { max, accel }
+    const maxF = (two ? two.max : 26) * boost, maxB = two ? -2.5 : -8;
+    const acc = two ? two.accel : 12;
+    if (th > 0) v.speed += (v.speed < 0 ? 30 : acc) * dt;
     else if (th < 0) v.speed -= (v.speed > 0 ? 30 : 8) * dt;
     else v.speed -= v.speed * Math.min(1, dt * 0.9);
     if (input.down('Space')) v.speed -= v.speed * Math.min(1, dt * 4);
     v.speed = Math.max(maxB, Math.min(maxF, v.speed));
     const grip = 1 - (this.wet || 0) * 0.35;      // 雨雪天转向更飘
-    const turn = st * Math.min(1, Math.abs(v.speed) / 4) * 1.6 * grip * Math.sign(v.speed || 1);
+    const turn = st * Math.min(1, Math.abs(v.speed) / (two ? 1.5 : 4)) * (two ? 2.3 : 1.6) * grip * Math.sign(v.speed || 1);
     v.yaw += turn * dt;
     v.pos.x += Math.sin(v.yaw) * v.speed * dt;
     v.pos.z += Math.cos(v.yaw) * v.speed * dt;
     const before = v.pos.clone();
-    const g = this.col.resolve(v.pos, 1.3, 1.4, 0.7);
+    const g = this.col.resolve(v.pos, two ? 0.45 : 1.3, 1.4, 0.7);
     if (before.distanceToSquared(v.pos) > 1e-4) v.speed *= 0.6; // 撞墙减速
     v.pos.y += (g - v.pos.y) * Math.min(1, dt * 12);
     v.update(dt, st);
     this.pos.copy(v.pos);
     this.yaw = v.yaw;
+    if (two) {
+      // 骑车姿势：自行车蹬踏（双腿交替）；伙伴跑步跟随
+      const ud = this.model.userData;
+      ud.setPose?.('sit'); ud.update?.(dt, 0);
+      if (v.kind === 'bike' && ud.bones?.legs) {
+        const ph = (this._pedal = (this._pedal || 0) + v.speed * dt * 2.2);
+        for (const L of ud.bones.legs) { L.thigh.rotation.x = -1.2 + Math.sin(ph + (L.side > 0 ? 0 : Math.PI)) * 0.45; L.shin.rotation.x = 1.0 + Math.cos(ph + (L.side > 0 ? 0 : Math.PI)) * 0.4; }
+      }
+      if (ud.bones?.arms) for (const A of ud.bones.arms) { A.upper.rotation.x = -0.9; A.upper.rotation.z = A.side * 0.15; A.lower.rotation.x = -0.4; }
+      this._updateBuddy(dt);
+    }
     return Math.abs(v.speed);
   }
 }

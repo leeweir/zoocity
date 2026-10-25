@@ -109,7 +109,7 @@ function onGridRoad(layout, x, z) {
 
 export function buildCurves(ctx) {
   const { b, col, layout } = ctx;
-  const ASPH = 0x34363c, WALK = 0xc9c2b2, CURB = 0xe9e4d6;
+  const ASPH = 0x3f4248, WALK = 0xc9c2b2, CURB = 0xe9e4d6;
   for (const c of CURVES) {
     const p = c.pts;
     for (let i = 0; i < p.length - 1; i++) {

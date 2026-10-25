@@ -59,7 +59,7 @@ export function makeRigAnimator(rig, cfg) {
     st.speed += (speed - st.speed) * (1 - Math.exp(-dt * 10));
     const sp = Math.max(0, st.speed);
     const pose = st.pose;
-    const special = pose === 'jump' || pose === 'sit';
+    const special = pose === 'jump' || pose === 'sit' || pose === 'swim';
     const moving = !special && speed > 0.15;
     st.walk += ((moving ? 1 : 0) - st.walk) * (1 - Math.exp(-dt * 8));
     const runT = clamp((sp - 3.2) / 3.5, 0, 1) * st.walk;
@@ -118,6 +118,12 @@ export function makeRigAnimator(rig, cfg) {
       if (A) { T(A.upper, -0.55 + Math.sin(t * 2.7) * 0.25, 0, A.side * 0.15); T(A.lower, -0.8 + Math.sin(t * 3.9) * 0.25); }
       const B = (rig.arms || []).find(a => a !== A);
       if (B) { T(B.upper, -0.15 + Math.sin(t * 1.9 + 1) * 0.12); T(B.lower, -0.35); }
+    } else if (pose === 'swim') {
+      // 游泳：身体前倾、手臂交替划水（自由泳）、腿上下打水
+      const ph = st.t * 5.5;
+      for (const L of rig.legs || []) { T(L.thigh, 0.3 + Math.sin(ph * 1.6 + (L.side > 0 ? 0 : Math.PI)) * 0.35); T(L.shin, 0.25); T(L.foot, 0.6); }
+      for (const A of rig.arms || []) { T(A.upper, -2.2 + Math.sin(ph + (A.side > 0 ? 0 : Math.PI)) * 1.5, 0, A.side * 0.25); T(A.lower, -0.3); }
+      T(rig.torso, 0.35); T(rig.head, -0.55);
     } else if (pose === 'jump') {
       for (const L of rig.legs || []) { T(L.thigh, -1.05 - (L.side > 0 ? 0.15 : 0)); T(L.shin, 1.55); T(L.foot, 0.35); }
       for (const A of rig.arms || []) { T(A.upper, -1.1, 0, A.side * 0.5); T(A.lower, -0.5); }
