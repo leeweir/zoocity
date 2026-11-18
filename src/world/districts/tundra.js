@@ -163,8 +163,8 @@ export function build(ctx) {
   // ———————————————————— 地面 / 道路 / 标线 ————————————————————
   const W = R.x1 - R.x0, Dd = R.z1 - R.z0, CX = (R.x0 + R.x1) / 2, CZ = (R.z0 + R.z1) / 2;
   b.box(W, 0.008, Dd, CX, 0, CZ, D.ground, { shadow: false });
-  for (const x of D.roadsX) b.box(ROAD_W, 0.02, Dd, x, 0, CZ, ROAD, { shadow: false });
-  for (const z of D.roadsZ) b.box(W, 0.02, ROAD_W, CX, 0, z, ROAD, { shadow: false });
+  for (const x of D.roadsX) b.box(ROAD_W, 0.02, Dd, x, 0, CZ, ROAD, { mat: 'asphalt', shadow: false });
+  for (const z of D.roadsZ) b.box(W, 0.02, ROAD_W, CX, 0, z, ROAD, { mat: 'asphalt', shadow: false });
 
   const intervals = (a0, a1, crosses) => {
     const cs = [...crosses].sort((p, q) => p - q);

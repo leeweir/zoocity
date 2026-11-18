@@ -121,7 +121,7 @@ export function buildCurves(ctx) {
       const L = len + 1.2;                                   // 稍长一点，拐角处不留缝
       // 路基 + 沥青
       b.box(ROAD_W + WALK_W * 2 + 1, ROAD_TOP - 0.02, L, mx, 0, mz, 0x8f8a7c, { ry, shadow: false });
-      b.box(ROAD_W, 0.04, L, mx, ROAD_TOP - 0.03, mz, ASPH, { ry, shadow: false });
+      b.box(ROAD_W, 0.04, L, mx, ROAD_TOP - 0.03, mz, ASPH, { mat: 'asphalt', ry, shadow: false });
       // 双黄中线
       for (const o of [-0.18, 0.18]) b.box(0.14, 0.02, L, mx + nx * o, ROAD_TOP + 0.01, mz + nz * o, 0xf2c94c, { ry, shadow: false });
       // 白色虚线车道分隔

@@ -41,7 +41,8 @@ export class Perf {
       // 网格的“细节尺度”：三角形密度高、尺寸小的网格（街道家具、植物）近处才画
       const tris = (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3;
       const density = tris / Math.max(1, r * r);
-      const big = m.geometry.boundingBox ? (m.geometry.computeBoundingBox(), m.geometry.boundingBox.max.y) : 30;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      const big = m.geometry.boundingBox.max.y;
       // 高楼（max.y 大）远处可见；矮小密集的物体 250–450m
       const far = big > 25 ? 2600 : big > 8 ? 900 : density > 6 ? 330 : 520;
       this.items.push({ m, c: bs.center.clone(), r, far, shadowFar: big > 25 ? 260 : 140, castShadow: m.castShadow });

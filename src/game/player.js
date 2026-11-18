@@ -7,6 +7,30 @@ const HEROES = {
   nick: { name: '尼克·王尔德', walk: 3.0, run: 7.2, jump: 5.4, radius: 0.36, height: 1.3, camDist: 4.6 },
 };
 
+let footfallTexture;
+const footfallPlane = new THREE.PlaneGeometry(.70,.57).rotateX(-Math.PI/2);
+function groundShadow(parent) {
+  if (!footfallTexture) {
+    const size=48, data=new Uint8Array(size*size*4);
+    for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+      const radius=Math.hypot((x+.5)/size*2-1,(y+.5)/size*2-1);
+      const i=(x+y*size)*4;
+      data[i]=data[i+1]=data[i+2]=255;
+      data[i+3]=255*(1-THREE.MathUtils.smoothstep(radius, .08, 1))**1.8;
+    }
+    footfallTexture=new THREE.DataTexture(data,size,size);footfallTexture.magFilter=THREE.LinearFilter;footfallTexture.needsUpdate=true;
+  }
+  const mat=new THREE.MeshBasicMaterial({map:footfallTexture,color:0x282c34,transparent:true,depthWrite:false,opacity:.34});
+  const shadow=new THREE.Mesh(footfallPlane,mat);
+  parent.add(shadow);
+  return shadow;
+}
+function placeShadow(shadow, lift, dry) {
+  shadow.visible=dry && lift<.75;
+  shadow.position.y=.041-lift;
+  shadow.material.opacity=.34*(1-THREE.MathUtils.smoothstep(lift,0,.75));
+}
+
 export class Player {
   constructor(scene, col, models) {
     this.scene = scene; this.col = col; this.models = models; // { judy: Group, nick: Group }
@@ -22,6 +46,7 @@ export class Player {
     this.buddyPos = new THREE.Vector3();
     this.buddyYaw = 0;
     this.buddy = new THREE.Group(); scene.add(this.buddy);
+    this.shadow = groundShadow(this.root); this.buddyShadow = groundShadow(this.buddy);
     this.vehicle = null;
     this.stamina = 1;
     this.frozen = false;
@@ -47,7 +72,8 @@ export class Player {
 
   setPosition(x, y, z, yaw = 0) {
     this.pos.set(x, y, z); this.yaw = yaw; this.vel.set(0, 0, 0);
-    this.buddyPos.set(x - Math.sin(yaw) * 1.6 + 1, y, z - Math.cos(yaw) * 1.6);
+    this.buddyYaw = yaw;
+    this.buddyPos.set(x - Math.sin(yaw) * .5 + Math.cos(yaw) * 1.3, y, z - Math.cos(yaw) * .5 - Math.sin(yaw) * 1.3);
   }
 
   switchHero() {
@@ -130,6 +156,7 @@ export class Player {
     this.swimming = !this.flying && !this.vehicle && inCanal(this.pos.x, this.pos.z) && this.pos.y < WATER_Y + 0.2;
     if (this.swimming) { this.onGround = false; this.stamina = Math.min(1, this.stamina); }
     if (this.swimming !== wasSwim) this.onSwimChange?.(this.swimming);
+    placeShadow(this.shadow,this.pos.y-g,!this.swimming && !this.flying);
 
     const hs = Math.hypot(this.vel.x, this.vel.z);
     this.root.position.copy(this.pos);
@@ -188,6 +215,7 @@ export class Player {
     const ty = this.flying ? Math.max(g, this.pos.y + 0.8) : bSwim ? WATER_Y - 0.7 : g;
     this.buddyPos.y += (ty - this.buddyPos.y) * Math.min(1, dt * (this.flying ? 3 : 10));
     this.buddy.position.copy(this.buddyPos);
+    placeShadow(this.buddyShadow,this.buddyPos.y-g,!bSwim && !this.flying);
     if (!this.buddyCopter) { this.buddyCopter = makeCopter(); this.buddy.add(this.buddyCopter); }
     this.buddyCopter.visible = this.flying;
     this.buddyCopter.position.y = (this.models[this.buddyKey].userData.totalHeight || this.models[this.buddyKey].userData.height || 1.3) + 0.06;
@@ -293,7 +321,7 @@ function makeCopter() {
 export class ThirdPersonCamera {
   constructor(camera, col) {
     this.cam = camera; this.col = col;
-    this.yaw = Math.PI; this.pitch = 0.28; this.dist = 4.5; this.targetDist = 4.5;
+    this.yaw = Math.PI; this.pitch = 0.09; this.dist = 4.5; this.targetDist = 4.5;
     this.focus = new THREE.Vector3();
     this.shake = 0;
   }

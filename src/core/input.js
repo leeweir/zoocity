@@ -4,7 +4,7 @@
 export const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches;
 
 export class Input {
-  constructor(canvas) {
+  constructor(canvas, captureKeys = () => true) {
     this.keys = new Set();
     this.pressed = new Set();   // 本帧刚按下
     this.mouseDX = 0; this.mouseDY = 0; this.wheel = 0;
@@ -13,7 +13,7 @@ export class Input {
     this.touch = IS_TOUCH;
     this.axis = { x: 0, y: 0 };   // 摇杆：x 右为正，y 下（后退）为正，长度 0..1
     addEventListener('keydown', e => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (!captureKeys() || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
       this.keys.add(e.code);
       if (['Space', 'Tab'].includes(e.code)) e.preventDefault();

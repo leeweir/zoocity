@@ -1,4 +1,8 @@
 // UI：HUD、对话框（打字机效果 + 选项）、提示、模态窗
+import judyPortrait from './art/judy.webp';
+import nickPortrait from './art/nick.webp';
+export const portraits = { judy: judyPortrait, nick: nickPortrait };
+
 const $ = (sel, root = document) => root.querySelector(sel);
 export const el = (tag, attrs = {}, html = '') => {
   const e = document.createElement(tag);
@@ -16,20 +20,20 @@ export class UI {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
         <div id="hud-top">
-          <div class="chip" id="heroChip"><span class="face">🐰</span><div><b class="nm">朱迪</b><small>Tab 切换</small><div id="stamina"><i></i></div></div></div>
+          <div class="chip" id="heroChip"><img class="face" alt="" src="${portraits.judy}"><div><b class="nm">朱迪</b><small>Tab 切换</small><div id="stamina"><i></i></div></div></div>
           <div class="chip" id="clock">09:00</div>
           <div class="chip" id="rep">⭐ 0</div>
         </div>
         <div class="chip hidden" id="objective"></div>
         <div id="minimap"><canvas width="420" height="420"></canvas><div class="n"></div></div>
         <div class="chip hidden" id="prompt"></div>
-        <div id="help">
+        <details id="help"><summary>操作指南</summary><div class="controls">
           <kbd>WASD</kbd> 移动 · <kbd>Shift</kbd> 奔跑 · <kbd>Space</kbd> 跳跃 · <kbd>E</kbd> 互动<br>
           <kbd>Q</kbd> 侦探感知 · <kbd>Tab</kbd> 切换角色 · <kbd>F</kbd> 上/下警车 · <kbd>H</kbd> 警笛<br>
           <kbd>J</kbd> 侦探档案 · <kbd>M</kbd> 地图/快速出行 · <kbd>Esc</kbd> 菜单<br>
           <kbd>G</kbd> 竹蜻蜓 · <kbd>C</kbd> 下降 · <kbd>T</kbd> 交警模式
-        </div>
-        <div id="fps"></div>
+          <div id="fps"></div>
+        </div></details>
         <div id="touchBtns">
           <button class="tb big" id="tbAct" data-k="KeyE">E</button>
           <button class="tb" data-k="Space" data-hold="1">跳</button>
@@ -97,7 +101,7 @@ export class UI {
   show(id, on = true) { $('#' + id).classList.toggle('hidden', !on); }
 
   setHero(key) {
-    $('#heroChip .face').textContent = key === 'judy' ? '🐰' : '🦊';
+    $('#heroChip .face').src = portraits[key];
     $('#heroChip .nm').textContent = key === 'judy' ? '朱迪·霍普斯' : '尼克·王尔德';
   }
   setStamina(v) { $('#stamina i').style.width = (v * 100).toFixed(0) + '%'; }

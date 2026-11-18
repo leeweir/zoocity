@@ -4,7 +4,33 @@ import { SharedUniforms } from '../core/builder.js';
 import { IS_TOUCH } from '../core/input.js';
 import { WORLD_SIZE, WATER, CONNECTORS, ROAD_W, DISTRICTS } from './layout.js';
 
+// One small HDR panorama gives painted metal and curved glass something to reflect.
+// The diffuse sky and the brightest windows are baked once, including on mobile.
+function cityReflections() {
+  const width = 192, height = 96, pixels = new Uint16Array(width * height * 4);
+  const sky = new THREE.Color(0x76b1bc), horizon = new THREE.Color(0xf7ddbc);
+  const ground = new THREE.Color(0x958576), shade = new THREE.Color(0x385660), c = new THREE.Color();
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const a = (x + .5) / width * Math.PI * 2, h = Math.sin(((y + .5) / height - .5) * Math.PI);
+    const skyline = .07 + .06 * Math.sin(Math.floor(a * 7) * 39.1) + .035 * Math.cos(Math.floor(a * 21));
+    if (h < -.08) c.copy(ground).multiplyScalar(.64 + .24 * (1 + h));
+    else if (h < skyline) c.copy(shade).multiplyScalar(.85 + .24 * Math.cos(a * 11));
+    else c.copy(horizon).lerp(sky, Math.min(1, (h - skyline) * 1.6));
+    const sun = 2.8 * Math.exp(-17 * (1 - Math.cos(a - 1.3)) - 22 * (h - .44) ** 2);
+    const i = (y * width + x) * 4;
+    pixels[i] = THREE.DataUtils.toHalfFloat(c.r + sun);
+    pixels[i + 1] = THREE.DataUtils.toHalfFloat(c.g + sun * .81);
+    pixels[i + 2] = THREE.DataUtils.toHalfFloat(c.b + sun * .57);
+    pixels[i + 3] = THREE.DataUtils.toHalfFloat(1);
+  }
+  const map = new THREE.DataTexture(pixels, width, height, THREE.RGBAFormat, THREE.HalfFloatType);
+  map.mapping = THREE.EquirectangularReflectionMapping;
+  map.minFilter = map.magFilter = THREE.LinearFilter; map.needsUpdate = true;
+  return map;
+}
+
 export function createEnvironment(scene, renderer, b) {
+  scene.environment = cityReflections();
   // —— 天空球 ——
   const skyU = {
     uSun: { value: new THREE.Vector3(0, 1, 0) },
@@ -19,13 +45,13 @@ export function createEnvironment(scene, renderer, b) {
       void main(){
         vec3 d = normalize(vDir);
         float y = max(d.y, -0.1);
-        vec3 dayTop = vec3(0.30,0.56,0.92), dayHor = vec3(0.78,0.88,0.97);
-        vec3 nTop = vec3(0.02,0.03,0.09), nHor = vec3(0.10,0.10,0.22);
+        vec3 dayTop = vec3(.115,.42,.54), dayHor = vec3(.92,.83,.67);
+        vec3 nTop = vec3(.009,.023,.062), nHor = vec3(.078,.13,.20);
         float sunH = uSun.y;
         vec3 duskHor = vec3(1.0,0.55,0.3);
         vec3 top = mix(dayTop, nTop, uNight);
         vec3 hor = mix(dayHor, nHor, uNight);
-        float dusk = smoothstep(0.35, 0.0, abs(sunH)) * (1.0 - uNight*0.6);
+        float dusk = (1.0-smoothstep(0.0, 0.35, abs(sunH))) * (1.0 - uNight*0.6);
         hor = mix(hor, duskHor, dusk * 0.8 * smoothstep(-0.2, 1.0, dot(normalize(d.xz+1e-4), normalize(uSun.xz+1e-4))));
         vec3 col = mix(hor, top, pow(clamp(y,0.0,1.0), 0.55));
         float sd = max(dot(d, normalize(uSun)), 0.0);
@@ -39,13 +65,13 @@ export function createEnvironment(scene, renderer, b) {
         float st = step(0.9975, h(sp)) * uNight * smoothstep(0.05, 0.3, d.y);
         col += vec3(st) * (0.6 + 0.4*sin(uTime*3.0 + h(sp)*40.0));
         // 云（简单 fbm 带）
-        vec2 cp = d.xz / max(d.y, 0.06) * 0.6 + vec2(uTime*0.004, 0.0);
+        vec2 cp = d.xz / max(d.y, 0.06) * vec2(.62,1.14) + vec2(uTime*0.003, 0.0);
         float c = 0.0, a = 0.5;
         for(int i=0;i<4;i++){ vec2 ip = floor(cp), fp = fract(cp); fp = fp*fp*(3.0-2.0*fp);
           float n = mix(mix(h(vec3(ip,1.)),h(vec3(ip+vec2(1,0),1.)),fp.x), mix(h(vec3(ip+vec2(0,1),1.)),h(vec3(ip+vec2(1,1),1.)),fp.x), fp.y);
           c += n*a; cp *= 2.1; a *= 0.5; }
-        c = smoothstep(0.55, 0.85, c) * smoothstep(0.02, 0.25, d.y);
-        col = mix(col, mix(vec3(1.0), vec3(0.18,0.2,0.3), uNight) * (0.85 + dusk*0.2), c * 0.75);
+        c = smoothstep(.47,.75,c) * smoothstep(.025,.21,d.y);
+        col = mix(col, mix(vec3(1.0,.94,.82),vec3(.13,.18,.25),uNight),c * .80);
         gl_FragColor = vec4(col, 1.0);
         #include <colorspace_fragment>
       }`,
@@ -60,10 +86,10 @@ export function createEnvironment(scene, renderer, b) {
   const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
   sun.castShadow = true;
   sun.shadow.mapSize.setScalar(IS_TOUCH ? 1024 : 2048);
-  const S = 90;
+  const S = 67;
   Object.assign(sun.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: 900 });
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.6;
+  sun.shadow.bias = -.00017;
+  sun.shadow.normalBias = .072;
   scene.add(sun, sun.target);
 
   scene.fog = new THREE.Fog(0xcfe3f0, 250, 1500);
@@ -127,7 +153,7 @@ export function createEnvironment(scene, renderer, b) {
     const len = Math.hypot(c.x2 - c.x1, c.z2 - c.z1);
     const ry = Math.atan2(c.x2 - c.x1, c.z2 - c.z1);
     const mx = (c.x1 + c.x2) / 2, mz = (c.z1 + c.z2) / 2;
-    b.box(c.w, 0.04, len + 2, mx, 0, mz, 0x3f4248, { ry, shadow: false });
+    b.box(c.w, 0.04, len + 2, mx, 0, mz, 0x3f4248, { mat: 'asphalt', ry, shadow: false });
     for (let s = -len / 2; s < len / 2; s += 6) {
       b.box(0.25, 0.02, 3, mx + Math.sin(ry) * s, 0.04, mz + Math.cos(ry) * s, 0xf2c94c, { ry, shadow: false, mat: 'glow' });
     }
@@ -154,7 +180,7 @@ export function createEnvironment(scene, renderer, b) {
   scene.add(mt);
 
   // —— 昼夜循环 ——
-  const fogDay = new THREE.Color(0xcfe3f0), fogNight = new THREE.Color(0x1a2036), fogDusk = new THREE.Color(0xe7b38a);
+  const fogDay = new THREE.Color(0xf1dfbd), fogNight = new THREE.Color(0x243445), fogDusk = new THREE.Color(0xe7b38a);
   const tmpC = new THREE.Color();
   const state = { time: 9.5, speed: 24 / (20 * 60), paused: false, weather: 'clear', weatherT: 90, wet: 0, interior: null }; // 20 分钟现实时间 = 1 天
 
@@ -240,12 +266,13 @@ export function createEnvironment(scene, renderer, b) {
     sun.target.position.copy(tmpF);
     sun.position.copy(tmpF).addScaledVector(ld, 320);
     sun.target.updateMatrixWorld();
-    sun.intensity = 2.8 * day + 0.55 * night;
-    sun.color.setRGB(1, 0.92 - dusk * 0.25, 0.82 - dusk * 0.4);
+    sun.intensity = 2.15 * day + 0.52 * night;
+    sun.color.setRGB(1, .84 - dusk * .22, .68 - dusk * .35);
     if (night > 0.5) sun.color.setRGB(0.6, 0.7, 1.0);
-    hemi.intensity = 0.8 + 0.4 * day;
-    hemi.color.setRGB(0.81 - night * 0.35, 0.9 - night * 0.32, 1.0 - night * 0.1);
-    renderer.toneMappingExposure = 1.05;
+    hemi.intensity = .46 + .38 * day;
+    hemi.color.setRGB(.67 - night * .30, .82 - night * .30, .95 - night * .12);
+    scene.environmentIntensity = .23 + .54 * day;
+    renderer.toneMappingExposure = 1.04;
 
     // —— 天气：每个地区按池子随机切换；室内无天气 ——
     state.weatherT -= dt;
@@ -273,10 +300,11 @@ export function createEnvironment(scene, renderer, b) {
       wPts.renderOrder = 2;
     }
     state.wet += ((state.weather === 'rain' || state.weather === 'snow' ? 1 : 0) - state.wet) * Math.min(1, dt * 0.2);
+    SharedUniforms.uWet.value = state.interior ? 0 : state.wet;
 
     const D = DISTRICTS[districtKey];
     if (D) districtFog.lerp(tmpC.set(D.fog), Math.min(1, dt * 0.8));
-    scene.fog.color.copy(districtFog).lerp(fogDusk, dusk * 0.4).lerp(fogNight, night * 0.9);
+    scene.fog.color.copy(districtFog).lerp(fogDay,.48*day).lerp(fogDusk,dusk*.4).lerp(fogNight,night*.96);
     if (state.weather === 'sand') scene.fog.color.lerp(tmpC.set(0xc9a46a), (1 - wCur.fog) * 0.8);
     if (state.weather === 'rain') scene.fog.color.lerp(tmpC.set(0x7d8a96), (1 - wCur.fog) * 0.6 * (1 - night));
     // 雨林雾更浓；坏天气能见度降低
@@ -299,8 +327,15 @@ export function createEnvironment(scene, renderer, b) {
       const near = pickLamps(focus);
       lampPool.forEach((l, i) => { const p = near[i]; if (p) { l.position.set(p.x, p.y, p.z); l.userData.on = 1; } else l.userData.on = 0; });
     }
-    for (const l of lampPool) l.intensity += ((l.userData.on ? lampOn * 38 : 0) - l.intensity) * Math.min(1, dt * 4);
+    // Keep the light count stable as lamps change streets. Once daylight has faded
+    // the whole pool out, Three can use the cheaper daylight shader for the city.
+    const streetLightsVisible = lampOn > .002 || lampPool.some(l => l.intensity > .05);
+    for (const l of lampPool) {
+      l.intensity += ((l.userData.on ? lampOn * 38 : 0) - l.intensity) * Math.min(1, dt * 4);
+      l.visible = streetLightsVisible;
+    }
     const sv = extra.siren;
+    sirenR.visible = sirenB.visible = !!sv;
     if (sv) {
       const on = Math.floor(performance.now() / 160) % 2 === 0;
       sirenR.position.set(sv.x - 0.6, sv.y + 2.2, sv.z); sirenB.position.set(sv.x + 0.6, sv.y + 2.2, sv.z);

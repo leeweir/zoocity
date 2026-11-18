@@ -161,7 +161,7 @@ export function build(ctx) {
   // 南北路 x=0
   for (const rx of D.roadsX) {
     const len = R.z1 - R.z0;
-    b.box(ROAD_W, 0.03, len, rx, 0, cz, 0x3f4248, { shadow: false });
+    b.box(ROAD_W, 0.03, len, rx, 0, cz, 0x3f4248, { mat: 'asphalt', shadow: false });
     for (const s of [-1, 1]) b.box(1.8, 0.02, len, rx + s * (hw + 0.9), 0, cz, C.gravel, { shadow: false });
     // 车辙（路口留空）
     const cuts = [R.z0, ...D.roadsZ.flatMap(z => [z - hw, z + hw]), R.z1].sort((a, c) => a - c);
@@ -177,7 +177,7 @@ export function build(ctx) {
     for (let i = 0; i < xs.length; i += 2) {
       const x0 = xs[i], x1 = xs[i + 1]; if (x1 - x0 < 2) continue;
       const mx = (x0 + x1) / 2, ln = x1 - x0;
-      b.box(ln, 0.03, ROAD_W, mx, 0, rz, 0x3f4248, { shadow: false });
+      b.box(ln, 0.03, ROAD_W, mx, 0, rz, 0x3f4248, { mat: 'asphalt', shadow: false });
       for (const s of [-1, 1]) b.box(ln, 0.02, 1.8, mx, 0, rz + s * (hw + 0.9), C.gravel, { shadow: false });
       for (const s of [-1, 1]) for (const o of [1.6, 4.6]) b.box(ln, 0.04, 0.9, mx, 0, rz + s * o, C.dirtD, { shadow: false });
       b.box(ln, 0.036, 0.8, mx, 0, rz, 0x9a9a5a, { shadow: false });
@@ -580,7 +580,7 @@ export function build(ctx) {
       const za = zs[i], zb = zs[i + 1], ha = deckH(za), hb = deckH(zb), zm = (za + zb) / 2;
       col.ramp(-BH, za, BH, zb, ha, hb, 'z');
       sloped(BH * 2 + 2, 0.8, 0, za, zb, ha, hb, 0x8e8a84);                // 结构板
-      sloped(ROAD_W, 0.02, 0, za, zb, ha + 0.02, hb + 0.02, 0x3f4248, { shadow: false }); // 沥青
+      sloped(ROAD_W, 0.02, 0, za, zb, ha + 0.02, hb + 0.02, 0x3f4248, { mat: 'asphalt', shadow: false }); // 沥青
       for (const s of [-1, 1]) {
         sloped(BH - hw - 0.4, 0.02, s * (hw + (BH - hw - 0.4) / 2), za, zb, ha + 0.02, hb + 0.02, 0xc9b9a0, { shadow: false }); // 人行道
         sloped(0.15, 0.02, s * (hw - 0.3), za, zb, ha + 0.035, hb + 0.035, 0xf2f2f2, { shadow: false });

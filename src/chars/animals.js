@@ -221,7 +221,7 @@ const SP = {
   tiger:    { fur: '#e8822a', light: '#fbf0e0', stripe: '#1d1410', leg: .44, neck: .03, head: .09, bw: .13, bd: .1, sw: .15, snout: 'cat', nose: '#c76a5a', ears: 'round', tail: 'long', feet: 'paw', arm: .34, extra: ['stripes'] },
   cheetah:  { fur: '#e9b54a', light: '#fbecc8', spot: '#3a2a1a', leg: .35, neck: .02, head: .125, bw: .17, bd: .15, belly: 1.0, snout: 'cat', nose: '#3a2a1a', ears: 'round', tail: 'long', feet: 'paw', arm: .29, extra: ['spots', 'tearline'] },
   zebra:    { fur: '#f4f4f0', light: '#d8d8d4', stripe: '#1d1d1d', leg: .47, neck: .08, head: .07, hsy: 1.1, bw: .11, bd: .09, snout: 'horse', snoutCol: '#2a2a2a', ears: 'horse', tail: 'tuft', tuft: '#1d1d1d', feet: 'hoof', arm: .34, extra: ['stripes', 'maneStrip'] },
-  buffalo:  { fur: '#4f4a48', light: '#6e6662', leg: .42, neck: .02, head: .085, bw: .16, bd: .12, sw: .2, snout: 'broad', snoutCol: '#2f2b2a', ears: 'side', tail: 'tuft', tuft: '#2b2725', feet: 'hoof', arm: .33, extra: ['horns'], horn: '#cfc6b8' },
+  buffalo:  { fur: '#5c6467', light: '#868681', leg: .39, neck: .025, head: .113, hsx: 1.17, bw: .164, bd: .125, sw: .205, snout: 'broad', snoutCol: '#514d4d', ears: 'side', tail: 'tuft', tuft: '#393839', feet: 'hoof', arm: .34, extra: ['horns'], horn: '#d3c0a1' },
   polarbear:{ fur: '#f2f0ea', light: '#fbfaf6', leg: .38, neck: .02, head: .08, bw: .18, bd: .15, sw: .19, belly: .7, snout: 'bear', nose: '#222222', ears: 'round', tail: 'stub', feet: 'paw', arm: .33 },
   hippo:    { fur: '#8f7f95', light: '#d8a7a0', leg: .3, neck: .01, head: .11, hsx: 1.05, bw: .22, bd: .18, belly: 1.0, snout: 'broad', snoutCol: '#a8949e', snoutBig: 1.35, ears: 'tiny', tail: 'tuft', tuft: '#6e5f74', feet: 'hoof', arm: .27 },
   elephant: { fur: '#8e9196', light: '#a8abb0', leg: .38, neck: .01, head: .1, bw: .19, bd: .15, sw: .2, belly: .6, snout: 'trunk', ears: 'flap', tail: 'tuft', tuft: '#55585c', feet: 'hoof', hoof: '#c9c6bd', arm: .3, extra: ['tusks'] },
@@ -383,7 +383,7 @@ function resolveOutfit(species, opts, r) {
   } else if (outfit === 'suit') {
     o.top = opts.outfitColor || pick(r, PAL.suit); o.pants = o.top; o.sleeve = 'long'; o.tie = pick(r, PAL.tie); r();
   } else if (outfit === 'police') {
-    o.top = opts.outfitColor || '#1f2a44'; o.pants = '#1a2030'; o.sleeve = 'long'; o.vest = '#15171c'; r(); r();
+    o.top = opts.outfitColor || '#486985'; o.pants = '#36475a'; o.sleeve = 'long'; o.vest = '#293e52'; r(); r();
   } else if (outfit === 'worker') {
     o.top = pick(r, PAL.workerShirt); o.vest = opts.outfitColor || pick(r, PAL.workerVest); o.pants = pick(r, ['#2c3e66', '#3b5998', '#5a4a3a']); o.sleeve = 'long'; o.hat = r() < 0.75;
   } else { // dress
@@ -440,7 +440,13 @@ function buildGeometry(key, sp, fur, light, ot, lod = 'hi') {
     P.add('torso', G.cone4, '#f4f4f4', [0, T * 0.8, chestZ * 0.9], [sw * 0.4, T * 0.28, 0.02], [Math.PI, 0, 0]);
     P.add('torso', G.box, ot.tie, [0, T * 0.68, chestZ + 0.012], [bw * 0.13, T * 0.36, 0.01], [-0.12, 0, 0]);
   } else if (ot.outfit === 'police') {
-    P.add('torso', G.sphLo, '#d4af37', [sw * 0.45, T * 0.82, chestZ * 0.98], [bw * 0.11, bw * 0.13, 0.012]);
+    P.add('torso', G.sphLo, '#dfba72', [sw * .40, T * .76, chestZ * 1.03], [bw * .12, bw * .15, .012]);
+    P.add('torso', G.box, '#d0ba91', [-sw*.42,T*.73,chestZ*1.06], [bw*.26,T*.023,.009]);
+    for(const side of [-1,1]){
+      P.add('torso',G.box,'#638299',[side*sw*.28,T*.89,bd*.83],[sw*.35,T*.075,.017],[-.22,side*.30,-side*.32]);
+      P.add('torso',G.box,'#d3b179',[side*sw*.82,T*.892,.012],[sw*.33,.013,bd*.58],[0,0,-side*.14]);
+      P.add('torso',G.box,'#506174',[side*sw*.42,T*.59,chestZ*1.07],[bw*.45,T*.028,.012],[0,side*.23,0]);
+    }
   } else if (ot.outfit === 'worker') {
     P.add('torso', G.cyl, '#e8e8d0', [0, T * 0.62, 0], [sw * 1.01, T * 0.05, bd * 0.98]);
     P.add('torso', G.cyl, '#e8e8d0', [0, T * 0.38, 0], [bw * 1.02, T * 0.05, bd * 1.02]);
@@ -654,12 +660,20 @@ function buildGeometry(key, sp, fur, light, ot, lod = 'hi') {
     P.add('head', G.sphLo, '#5a3418', [sd * (hr * 0.3 + hr * 0.1), topY + hr * 0.55, -hr * 0.22], [hr * 0.14, hr * 0.14, hr * 0.14]);
   }
   if (ex.has('horns')) for (const sd of [1, -1]) {
-    // 角根 → 向外 → 向上弯
-    P.add('head', G.sph, sp.horn, [sd * hr * 0.35, topY - hr * 0.1, -hr * 0.05], [hr * 0.38, hr * 0.2, hr * 0.3]);
-    const a = [sd * hr * 0.5, topY - hr * 0.1, -hr * 0.05], b = [sd * hr * 1.25, topY - hr * 0.2, -hr * 0.1], c = [sd * hr * 1.55, topY + hr * 0.45, -hr * 0.15];
-    P.between('head', G.cyl, sp.horn, a, b, hr * 0.17, 1);
-    P.add('head', G.sph, sp.horn, b, [hr * 0.17, hr * 0.17, hr * 0.17]);
-    P.between('head', G.cone, shade(sp.horn, 0.9), b, c, hr * 0.17, 1);
+    P.add('head', G.sph, '#938577', [sd*hr*.44,topY-hr*.10,-hr*.03],[hr*.51,hr*.33,hr*.45],[0,0,sd*.13]);
+    const curve = new THREE.CatmullRomCurve3([[.39,0,0],[.90,-.04,.03],[1.48,-.23,.09],[1.80,-.10,.10],[1.97,.23,.035],[1.94,.55,-.10]]
+      .map(([x,y,z])=>new THREE.Vector3(x*sd,y,z)));
+    const rings=lod==='hi' ? 16 : 8, sides=8;
+    const horn=new THREE.TubeGeometry(curve,rings,1,sides,false), pos=horn.attributes.position, v=new THREE.Vector3();
+    for(let i=0;i<=rings;i++){
+      const t=i/rings, center=curve.getPointAt(t), radius=.012+.29*(1-t)**.84;
+      for(let j=0;j<=sides;j++){
+        const k=i*(sides+1)+j;
+        v.fromBufferAttribute(pos,k).sub(center).multiplyScalar(radius).add(center);pos.setXYZ(k,v.x,v.y,v.z);
+      }
+    }
+    horn.computeVertexNormals();
+    P.add('head',strip(horn),sp.horn,[0,topY-hr*.08,0],[hr,hr,hr]);
   }
   if (ex.has('wool')) {
     for (let i = 0; i < 7; i++) {

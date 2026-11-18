@@ -1,478 +1,887 @@
-// 主角模型：朱迪·霍普斯（Judy Hopps）与尼克·王尔德（Nick Wilde），程序化高细节版本。
-//
-// 用法：
-//   import { createJudy, createNick } from './chars/heroes.js';
-//   const judy = createJudy(); scene.add(judy);
-//   judy.rotation.y = Math.atan2(dirX, dirZ);   // 模型正面朝本地 +Z
-//   judy.userData.update(dt, horizontalSpeed);  // 每帧；0 待机，~3 走，~7 跑，10 冲刺
-//   judy.userData.setPose('idle'|'walk'|'run'|'jump'|'talk'|'sit');
-//   nick.userData.setSunglasses(true);          // 尼克墨镜（默认隐藏）
-//
-// 约定：原点在脚底，前方 = 本地 +Z，上 = +Y，角色左侧 = +X。
-// 'walk'/'run' 的步频完全由 update 的 speed 决定（pose 只区分 idle/talk/jump/sit 等特殊动作）。
-// userData.height = 身体高度（头顶，不含耳朵）；userData.totalHeight = 含耳朵。
-// 骨骼：userData.bones = { hips, torso, neck, head, arms:[{upper,lower,hand,side}], legs:[{thigh,shin,foot,side}], ears:[{base,tip,side}], tail:[...] }
+// Playable officers. Feet are at the origin, the face looks toward local +Z.
 import * as THREE from 'three';
 import { makeRigAnimator } from './animals.js';
+import { loft, bend, batchRigidParts } from './sculpt.js';
 
-// ---------------------------------------------------------------------------
-// 共享几何体 / 材质
-// ---------------------------------------------------------------------------
-const GEO = {
-  sph: new THREE.SphereGeometry(1, 20, 14),
-  sphMid: new THREE.SphereGeometry(1, 14, 10),
-  sphLo: new THREE.SphereGeometry(1, 10, 8),
-  hemi: new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-  cyl: new THREE.CylinderGeometry(1, 1, 1, 14),
-  cylThin: new THREE.CylinderGeometry(1, 1, 1, 6),
-  cone: new THREE.ConeGeometry(1, 1, 14),
-  box: new THREE.BoxGeometry(1, 1, 1),
-  torus: new THREE.TorusGeometry(1, 0.22, 8, 20),
-};
-const _caps = new Map();
-function capsule(r, len) {
-  const k = `${r}|${len}`;
-  let g = _caps.get(k);
-  if (!g) { g = new THREE.CapsuleGeometry(r, len, 6, 14); _caps.set(k, g); }
-  return g;
+const sphere = new THREE.SphereGeometry(1, 20, 14);
+const box = new THREE.BoxGeometry();
+const matte = 0.86,
+  metal = 0.36;
+const materials = new Map();
+function material(color, roughness = matte, metalness = 0) {
+  const key = [color, roughness, metalness].join('/');
+  if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({ color, roughness, metalness }));
+  return materials.get(key);
 }
-// 圆角盒（护甲板等），用 ExtrudeGeometry
-const _rb = new Map();
-function roundedPanel(w, h, d, r) {
-  const k = `${w}|${h}|${d}|${r}`;
-  let g = _rb.get(k);
-  if (g) return g;
-  const s = new THREE.Shape();
-  const x = -w / 2, y = -h / 2;
-  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r);
-  s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
-  s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y);
-  g = new THREE.ExtrudeGeometry(s, { depth: d, bevelEnabled: true, bevelThickness: d * 0.4, bevelSize: Math.min(r, d) * 0.6, bevelSegments: 2, curveSegments: 4 });
-  g.translate(0, 0, -d / 2);
-  _rb.set(k, g);
-  return g;
+const painted = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: matte });
+const swatches = new Map();
+function ink(hex) {
+  if (!swatches.has(hex)) swatches.set(hex, new THREE.Color(hex));
+  return swatches.get(hex);
 }
-
-const _mats = new Map();
-function mat(color, rough = 0.85, metal = 0, extra = {}) {
-  const k = `${new THREE.Color(color).getHexString()}|${rough}|${metal}|${JSON.stringify(extra)}`;
-  let m = _mats.get(k);
-  if (!m) { m = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, ...extra }); _mats.set(k, m); }
-  return m;
-}
-const _basic = new Map();
-function basic(color) {
-  let m = _basic.get(color);
-  if (!m) { m = new THREE.MeshBasicMaterial({ color }); _basic.set(color, m); }
-  return m;
-}
-
-function M(parent, geo, material, p = [0, 0, 0], s = [1, 1, 1], r = [0, 0, 0], shadow = true) {
-  const m = new THREE.Mesh(geo, material);
-  m.position.set(p[0], p[1], p[2]);
-  if (typeof s === 'number') m.scale.setScalar(s); else m.scale.set(s[0], s[1], s[2]);
-  m.rotation.set(r[0], r[1], r[2]);
-  m.castShadow = shadow; m.receiveShadow = shadow;
-  parent.add(m);
-  return m;
-}
-function Grp(parent, p = [0, 0, 0], r = [0, 0, 0], name = '') {
+const smooth = THREE.MathUtils.smoothstep;
+function pivot(parent, name, pos, rot = [0, 0, 0]) {
   const g = new THREE.Group();
-  g.position.set(p[0], p[1], p[2]); g.rotation.set(r[0], r[1], r[2]);
   g.name = name;
   parent.add(g);
+  g.position.set(...pos);
+  g.rotation.set(...rot);
   return g;
 }
-// 两点之间放一根圆柱/胶囊（局部坐标）
-const _up = new THREE.Vector3(0, 1, 0);
-function between(parent, geo, material, a, b, rad) {
-  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
-  const d = B.clone().sub(A); const len = d.length();
-  const m = new THREE.Mesh(geo, material);
-  m.position.copy(A.add(B).multiplyScalar(0.5));
-  m.quaternion.setFromUnitVectors(_up, d.normalize());
-  m.scale.set(rad, len, rad);
+function mesh(parent, geometry, mat, p = [0, 0, 0], scale = [1, 1, 1], rotation = [0, 0, 0]) {
+  const m = new THREE.Mesh(geometry, mat);
+  m.position.set(...p);
+  m.scale.set(...scale);
+  m.rotation.set(...rotation);
   m.castShadow = true;
+  m.receiveShadow = true;
   parent.add(m);
   return m;
 }
-// 躯干用车削体：profile = [[r, y], ...]
-function lathe(profile, seg = 20) {
-  return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), seg);
-}
+const oval = (parent, c, p, s, r) => mesh(parent, sphere, material(c), p, s, r);
+const panel = (parent, c, p, s, r) => mesh(parent, box, material(c), p, s, r);
 
-const hasDOM = typeof document !== 'undefined' && typeof document.createElement === 'function';
-
-// ---------------------------------------------------------------------------
-// 共同的眼睛构造（返回可眨眼的 group）
-// ---------------------------------------------------------------------------
-function makeEye(head, { p, r, iris, irisDark, yaw, lidColor, lidDrop = 0 }) {
-  const eg = Grp(head, p, [0, yaw, 0], 'eye');
-  M(eg, GEO.sphMid, mat('#fbfbf8', 0.3), [0, 0, 0], [r, r * 1.08, r * 0.55], [0, 0, 0], false);
-  M(eg, GEO.sphMid, mat(irisDark, 0.25), [0, -r * 0.05, r * 0.36], [r * 0.74, r * 0.8, r * 0.3], [0, 0, 0], false);
-  M(eg, GEO.sphMid, mat(iris, 0.25), [0, -r * 0.02, r * 0.4], [r * 0.6, r * 0.66, r * 0.28], [0, 0, 0], false);
-  M(eg, GEO.sphLo, mat('#0b0710', 0.2), [0, -r * 0.04, r * 0.5], [r * 0.32, r * 0.36, r * 0.12], [0, 0, 0], false);
-  M(eg, GEO.sphLo, basic('#ffffff'), [r * 0.22, r * 0.26, r * 0.58], [r * 0.14, r * 0.14, r * 0.06], [0, 0, 0], false);
-  M(eg, GEO.sphLo, basic('#ffffff'), [-r * 0.18, -r * 0.24, r * 0.58], [r * 0.07, r * 0.07, r * 0.04], [0, 0, 0], false);
-  if (lidDrop > 0) {
-    // 半闭眼皮（尼克的狡黠眼神）：一块毛色半球压在眼睛上部
-    M(eg, GEO.hemi, mat(lidColor, 0.8), [0, r * (0.25 - lidDrop), r * 0.05], [r * 1.08, r * 0.9, r * 0.66], [0.35, 0, 0], false);
-  }
-  eg.userData.baseSY = 1;
-  return eg;
-}
-
-// ---------------------------------------------------------------------------
-// 朱迪
-// ---------------------------------------------------------------------------
-export function createJudy() {
-  const C = {
-    fur: mat('#8f8a99', 0.95), furLight: mat('#d9d3de', 0.95), furDark: mat('#5d5866', 0.95),
-    innerEar: mat('#e9a3b5', 0.8), earTip: mat('#1c1a20', 0.9), nose: mat('#e47f97', 0.45),
-    shirt: mat('#1f2a44', 0.75), shirtLight: mat('#2c3a5c', 0.75), armor: mat('#121318', 0.45, 0.1),
-    pants: mat('#191c26', 0.8), belt: mat('#0c0c0e', 0.5, 0.1), gold: mat('#d9b13b', 0.3, 0.85),
-    pouch: mat('#1a1b20', 0.6), carrot: mat('#f07f1e', 0.5), carrotTop: mat('#3fa34d', 0.6),
-    tail: mat('#f4f2f5', 1.0), teeth: mat('#fffdf5', 0.3), mouth: mat('#3a1f26', 0.6),
-    whisker: mat('#3a3640', 0.6), padGrey: mat('#2a2c33', 0.5, 0.1), metal: mat('#a5a9b2', 0.35, 0.8),
-  };
-  const root = new THREE.Group(); root.name = 'Judy';
-  const hipY = 0.38;
-  const hips = Grp(root, [0, hipY, 0], [0, 0, 0], 'hips');
-
-  // 胯 / 裤子
-  M(hips, GEO.sph, C.pants, [0, 0.0, -0.005], [0.105, 0.08, 0.09]);
-  // 尾巴：毛球团
-  const tail = Grp(hips, [0, 0.02, -0.085], [-1.57, 0, 0], 'tail'); tail.rotation.order = 'YXZ';
-  M(tail, GEO.sphMid, C.tail, [0, 0.035, 0], 0.048);
-  for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2; M(tail, GEO.sphLo, C.tail, [Math.cos(a) * 0.03, 0.04 + Math.sin(a * 2) * 0.01, Math.sin(a) * 0.03], 0.03); }
-
-  // 躯干
-  const torso = Grp(hips, [0, 0.02, 0], [0, 0, 0], 'torso');
-  const shirtG = lathe([[0.0, -0.02], [0.098, -0.015], [0.106, 0.04], [0.098, 0.12], [0.104, 0.2], [0.11, 0.25], [0.09, 0.29], [0.05, 0.31], [0.0, 0.315]]);
-  M(torso, shirtG, C.shirt, [0, 0, 0], [1, 1, 0.82]);
-  // 护甲：胸前、背后、肩
-  M(torso, roundedPanel(0.15, 0.13, 0.02, 0.03), C.armor, [0, 0.2, 0.078], [1, 1, 1], [-0.12, 0, 0]);
-  M(torso, roundedPanel(0.13, 0.08, 0.02, 0.025), C.armor, [0, 0.1, 0.082], [1, 1, 1], [0.08, 0, 0]);
-  M(torso, roundedPanel(0.16, 0.18, 0.02, 0.03), C.armor, [0, 0.17, -0.078], [1, 1, 1], [0.1, 0, 0]);
-  for (const sd of [1, -1]) {
-    M(torso, GEO.sphMid, C.armor, [sd * 0.088, 0.262, 0], [0.042, 0.03, 0.05], [0, 0, sd * 0.4]); // 护肩
-    M(torso, GEO.box, C.armor, [sd * 0.095, 0.13, 0.0], [0.012, 0.1, 0.07]); // 侧扣带
-  }
-  // 衣领
-  for (const sd of [1, -1]) M(torso, GEO.box, C.shirtLight, [sd * 0.025, 0.298, 0.046], [0.04, 0.018, 0.03], [-0.5, sd * 0.4, sd * 0.3]);
-  // 警徽（左胸 = +X）
-  const badge = Grp(torso, [0.04, 0.225, 0.103], [-0.12, 0, 0], 'badge');
-  M(badge, GEO.cyl, C.gold, [0, 0, 0], [0.019, 0.006, 0.019], [Math.PI / 2, 0, 0]);
-  M(badge, GEO.cone, C.gold, [0, 0.0, 0.002], [0.012, 0.006, 0.012], [Math.PI / 2, 0, 0]);
-  M(badge, GEO.box, C.gold, [0, -0.026, 0.0], [0.03, 0.008, 0.004]);
-  // 胡萝卜录音笔（右胸口袋 = -X）
-  M(torso, GEO.box, C.armor, [-0.045, 0.2, 0.1], [0.035, 0.035, 0.008], [-0.12, 0, 0]);
-  const pen = Grp(torso, [-0.045, 0.235, 0.102], [-0.12, 0, 0.12], 'carrotPen');
-  M(pen, GEO.cone, C.carrot, [0, -0.02, 0], [0.007, 0.05, 0.007], [Math.PI, 0, 0]);
-  M(pen, GEO.cone, C.carrotTop, [0, 0.011, 0], [0.006, 0.014, 0.006]);
-  M(pen, GEO.cone, C.carrotTop, [0.003, 0.012, 0], [0.004, 0.012, 0.004], [0, 0, -0.5]);
-  // 腰带 + 工具
-  M(torso, GEO.cyl, C.belt, [0, 0.02, 0], [0.108, 0.026, 0.09]);
-  M(torso, roundedPanel(0.03, 0.024, 0.006, 0.005), C.gold, [0, 0.02, 0.092]);
-  for (const [x, z, ry] of [[0.07, 0.062, 0.7], [-0.07, 0.062, -0.7], [0.1, 0, 1.57], [-0.1, -0.01, -1.57]]) {
-    M(torso, roundedPanel(0.032, 0.036, 0.02, 0.006), C.pouch, [x, 0.015, z], [1, 1, 1], [0, ry, 0]);
-  }
-  // 腰侧：麻醉枪套 + 手铐
-  M(torso, GEO.box, C.pouch, [-0.06, -0.005, -0.075], [0.03, 0.05, 0.02], [0, -0.5, 0]);
-  M(torso, GEO.torus, C.metal, [0.065, -0.005, -0.07], [0.012, 0.012, 0.012], [0, 0.5, 0]);
-  M(torso, GEO.torus, C.metal, [0.075, -0.012, -0.06], [0.012, 0.012, 0.012], [0, 0.5, 0.5]);
-  // 对讲机（左肩）
-  M(torso, GEO.box, C.armor, [0.07, 0.25, 0.06], [0.02, 0.035, 0.012], [-0.2, 0, -0.2]);
-
-  // 脖子 + 头
-  const neck = Grp(torso, [0, 0.3, 0], [0, 0, 0], 'neck');
-  M(neck, GEO.cyl, C.fur, [0, 0.015, -0.005], [0.045, 0.05, 0.04]);
-  M(neck, GEO.sphLo, C.furLight, [0, 0.01, 0.025], [0.04, 0.03, 0.025]);
-  const head = Grp(neck, [0, 0.03, 0], [0, 0, 0], 'head');
-  const hc = 0.12; // 头心高度
-  M(head, GEO.sph, C.fur, [0, hc, 0], [0.122, 0.118, 0.115]);
-  // 脸颊绒毛（浅色）
-  for (const sd of [1, -1]) M(head, GEO.sphMid, C.furLight, [sd * 0.055, hc - 0.045, 0.06], [0.06, 0.05, 0.055], [0, 0, sd * 0.3]);
-  for (const sd of [1, -1]) M(head, GEO.cone, C.fur, [sd * 0.11, hc - 0.04, 0.0], [0.02, 0.05, 0.015], [0, 0, sd * 2.2]); // 腮边毛尖
-  M(head, GEO.sphMid, C.furLight, [0, hc - 0.05, 0.085], [0.045, 0.04, 0.04]);
-  M(head, GEO.sphMid, C.furLight, [0, hc - 0.085, 0.06], [0.04, 0.03, 0.04]); // 下巴
-  // 额头浅色斑
-  M(head, GEO.sphLo, C.furDark, [0, hc + 0.085, 0.07], [0.03, 0.025, 0.02]);
-  // 鼻子、嘴、门牙
-  M(head, GEO.sphLo, C.nose, [0, hc - 0.025, 0.122], [0.014, 0.01, 0.009]);
-  M(head, GEO.box, C.mouth, [0, hc - 0.058, 0.118], [0.003, 0.018, 0.003]);
-  for (const sd of [1, -1]) M(head, GEO.box, C.mouth, [sd * 0.011, hc - 0.067, 0.114], [0.022, 0.003, 0.003], [0, 0, sd * 0.35]);
-  M(head, GEO.box, C.teeth, [0, hc - 0.076, 0.114], [0.016, 0.012, 0.004]);
-  // 胡须
-  for (const sd of [1, -1]) for (let i = 0; i < 3; i++) {
-    between(head, GEO.cylThin, C.whisker, [sd * 0.025, hc - 0.035 - i * 0.006, 0.118], [sd * 0.085, hc - 0.025 - i * 0.018, 0.1], 0.0012);
-  }
-  // 大紫色眼睛
-  const eyes = [];
-  for (const sd of [1, -1]) {
-    eyes.push(makeEye(head, { p: [sd * 0.05, hc + 0.015, 0.097], r: 0.033, iris: '#8a5fd0', irisDark: '#4b2b86', yaw: sd * 0.38 }));
-    M(head, GEO.box, C.furDark, [sd * 0.05, hc + 0.058, 0.1], [0.032, 0.006, 0.006], [0, sd * 0.35, sd * 0.12]); // 眉毛
-  }
-  // 长耳朵（两节，可甩动）
-  const ears = [];
-  for (const sd of [1, -1]) {
-    const base = Grp(head, [sd * 0.042, hc + 0.095, -0.025], [-0.12, 0, -sd * 0.12], 'ear'); base.rotation.order = 'XZY';
-    M(base, GEO.sph, C.fur, [0, 0.115, 0], [0.042, 0.13, 0.017]);
-    M(base, GEO.sphMid, C.innerEar, [0, 0.125, 0.009], [0.027, 0.11, 0.009]);
-    const tip = Grp(base, [0, 0.215, 0], [-0.05, 0, 0], 'earTip');
-    M(tip, GEO.sph, C.fur, [0, 0.085, 0], [0.038, 0.105, 0.016]);
-    M(tip, GEO.sphMid, C.innerEar, [0, 0.065, 0.008], [0.023, 0.07, 0.008]);
-    M(tip, GEO.sphMid, C.earTip, [0, 0.145, 0.0], [0.028, 0.05, 0.017]);
-    ears.push({ base, tip, side: sd });
-  }
-
-  // 手臂：长袖制服 + 黑色护腕
-  const arms = [];
-  for (const sd of [1, -1]) {
-    const upper = Grp(torso, [sd * 0.112, 0.255, 0], [0.05, 0, sd * 0.1], 'upperArm');
-    M(upper, capsule(0.03, 0.085), C.shirt, [0, -0.06, 0]);
-    const lower = Grp(upper, [0, -0.125, 0], [-0.15, 0, 0], 'lowerArm');
-    M(lower, capsule(0.026, 0.08), C.shirt, [0, -0.055, 0]);
-    M(lower, GEO.cyl, C.armor, [0, -0.085, 0], [0.03, 0.04, 0.03]);
-    const hand = Grp(lower, [0, -0.115, 0.004], [0, 0, 0], 'hand');
-    M(hand, GEO.sphMid, C.fur, [0, -0.012, 0], [0.026, 0.03, 0.022]);
-    M(hand, capsule(0.008, 0.012), C.fur, [sd * -0.002, -0.006, 0.02], [1, 1, 1], [0.8, 0, 0]); // 拇指
-    arms.push({ upper, lower, hand, side: sd });
-  }
-  // 腿：黑裤 + 护膝 + 大兔脚
-  const legs = [];
-  for (const sd of [1, -1]) {
-    const thigh = Grp(hips, [sd * 0.058, -0.01, 0], [0, 0, 0], 'thigh');
-    M(thigh, capsule(0.052, 0.09), C.pants, [0, -0.075, 0.005]);
-    const shin = Grp(thigh, [0, -0.17, 0], [0, 0, 0], 'shin');
-    M(shin, capsule(0.038, 0.1), C.pants, [0, -0.07, 0]);
-    M(shin, roundedPanel(0.05, 0.055, 0.016, 0.014), C.padGrey, [0, -0.01, 0.036], [1, 1, 1], [-0.1, 0, 0]); // 护膝
-    M(shin, GEO.cyl, C.armor, [0, -0.135, 0], [0.04, 0.02, 0.04]); // 裤脚
-    const foot = Grp(shin, [0, -0.16, 0], [0, 0, 0], 'foot');
-    M(foot, GEO.sph, C.fur, [0, -0.018, 0.06], [0.048, 0.03, 0.115]);
-    M(foot, GEO.sphMid, C.furLight, [0, -0.032, 0.07], [0.04, 0.012, 0.1]); // 脚底浅色
-    for (let i = -1; i <= 1; i++) M(foot, GEO.sphLo, C.fur, [i * 0.018, -0.014, 0.16], [0.016, 0.017, 0.018]); // 脚趾
-    legs.push({ thigh, shin, foot, side: sd });
-  }
-
-  const rig = { root, hips, torso, head, arms, legs, ears, tail: [tail], eyes };
-  const anim = makeRigAnimator(rig, { hipY, legLen: hipY, scale: 1, sitY: 0.2, earFlop: 1.3, tailSway: 0.6, armOut: 0.04 });
-  root.userData = {
-    name: 'Judy Hopps', height: 1.0, totalHeight: 1.35, sitHipY: 0.2,
-    bones: { hips, torso, neck, head, arms, legs, ears, tail: [tail] },
-    update: anim.update, setPose: anim.setPose, getPose: anim.getPose,
-  };
-  root.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  anim.update(0.016, 0);
-  return root;
-}
-
-// ---------------------------------------------------------------------------
-// 尼克的夏威夷衬衫纹理
-// ---------------------------------------------------------------------------
-let _shirtTex = null;
-function hawaiianTexture() {
-  if (_shirtTex || !hasDOM) return _shirtTex;
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 256;
-  const g = cv.getContext('2d');
-  g.fillStyle = '#4f9a48'; g.fillRect(0, 0, 256, 256);
-  let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  const leaf = (x, y, len, ang, col) => {
-    g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = col;
-    g.beginPath(); g.moveTo(0, 0);
-    g.quadraticCurveTo(len * 0.5, -len * 0.32, len, 0); g.quadraticCurveTo(len * 0.5, len * 0.32, 0, 0); g.fill();
-    g.strokeStyle = 'rgba(20,50,20,0.55)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, 0); g.lineTo(len, 0); g.stroke();
-    g.restore();
-  };
-  for (let i = 0; i < 40; i++) {
-    const x = r() * 256, y = r() * 256, a = r() * Math.PI * 2, l = 22 + r() * 30;
-    const col = ['#2f6e33', '#76b85a', '#3d8a3e', '#9bd06b'][Math.floor(r() * 4)];
-    for (const [dx, dy] of [[0, 0], [256, 0], [-256, 0], [0, 256], [0, -256]]) leaf(x + dx, y + dy, l, a, col);
-  }
-  // 小花
-  for (let i = 0; i < 10; i++) {
-    const x = r() * 256, y = r() * 256;
-    for (const [dx, dy] of [[0, 0], [256, 0], [-256, 0], [0, 256], [0, -256]]) {
-      g.fillStyle = i % 2 ? '#f2d04a' : '#e9eccf';
-      for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2; g.beginPath(); g.arc(x + dx + Math.cos(a) * 5, y + dy + Math.sin(a) * 5, 4, 0, 7); g.fill(); }
-      g.fillStyle = '#d0702a'; g.beginPath(); g.arc(x + dx, y + dy, 2.5, 0, 7); g.fill();
+function stroke(parent, color, points, radius) {
+  const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
+  const segments = 12,
+    sides = 6;
+  const g = new THREE.TubeGeometry(curve, segments, radius, sides, false);
+  const pos = g.attributes.position,
+    v = new THREE.Vector3();
+  for (let row = 0; row <= segments; row++) {
+    const center = curve.getPointAt(row / segments);
+    const width = 0.17 + 0.83 * Math.sin((Math.PI * row) / segments) ** 0.55;
+    for (let j = 0; j <= sides; j++) {
+      const i = row * (sides + 1) + j;
+      v.fromBufferAttribute(pos, i).sub(center).multiplyScalar(width).add(center);
+      pos.setXYZ(i, v.x, v.y, v.z);
     }
   }
-  _shirtTex = new THREE.CanvasTexture(cv);
-  _shirtTex.wrapS = _shirtTex.wrapT = THREE.RepeatWrapping;
-  _shirtTex.repeat.set(3, 1.5);
-  _shirtTex.colorSpace = THREE.SRGBColorSpace;
-  _shirtTex.anisotropy = 4;
-  return _shirtTex;
+  mesh(parent, g, material(color));
 }
-// 无 DOM 时：用顶点色画叶子斑块
-function paintLeafVertexColors(geo) {
-  const pos = geo.attributes.position, n = pos.count;
-  const col = new Float32Array(n * 3);
-  const base = new THREE.Color('#4f9a48'), a = new THREE.Color('#2f6e33'), b = new THREE.Color('#9bd06b'), tmp = new THREE.Color();
-  for (let i = 0; i < n; i++) {
-    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-    const v = Math.sin(x * 61 + y * 23) * Math.sin(z * 57 - y * 41) + Math.sin(y * 90 + x * 30) * 0.4;
-    tmp.copy(base);
-    if (v > 0.45) tmp.copy(a); else if (v < -0.6) tmp.copy(b);
-    col[i * 3] = tmp.r; col[i * 3 + 1] = tmp.g; col[i * 3 + 2] = tmp.b;
+
+const eyeShape = new THREE.SphereGeometry(1, 24, 14);
+{
+  const p = eyeShape.attributes.position,
+    uv = eyeShape.attributes.uv;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i),
+      y = p.getY(i);
+    uv.setXY(i, (x + 1) / 2, (y + 1) / 2);
+    p.setY(i, y * (1 - 0.29 * x * x));
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  eyeShape.computeVertexNormals();
 }
-let _shirtMat = null;
-function shirtMaterial() {
-  if (_shirtMat) return _shirtMat;
-  const tex = hawaiianTexture();
-  _shirtMat = tex ? new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 })
-    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-  return _shirtMat;
+const eyeshades = new Map();
+function eyeMaterial(fox, side) {
+  const key = (fox ? 'hazel' : 'violet') + side;
+  if (eyeshades.has(key)) return eyeshades.get(key);
+  const size = 128,
+    data = new Uint8Array(size * size * 4);
+  const light = ink(fox ? '#a9c663' : '#cda5e9'),
+    dark = ink(fox ? '#365743' : '#5a477e');
+  const c = new THREE.Color();
+  for (let j = 0; j < size; j++)
+    for (let i = 0; i < size; i++) {
+      const x = (2 * (i + 0.5)) / size - 1,
+        y = (2 * (j + 0.5)) / size - 1;
+      const dx = (x + side * 0.17) * (fox ? 1.3 : 1.05),
+        dy = y + 0.04,
+        d = Math.hypot(dx, dy);
+      c.copy(ink('#fff3de')).lerp(ink('#c4b6af'), smooth(y, 0.12, 1) * 0.55);
+      if (d < 0.85) {
+        const rays = Math.cos(Math.atan2(dy, dx) * 31) * 0.035;
+        c.copy(dark).lerp(light, Math.max(0, 0.52 - dy * 0.8 + rays));
+        c.lerp(ink('#302737'), smooth(d, 0.72, 0.85));
+        c.lerp(ink('#1a1925'), 1 - smooth(d, 0.37, 0.42));
+      }
+      const rim = Math.sqrt(Math.max(0, 1 - x * x));
+      c.lerp(ink('#38303b'), smooth(y, rim * 0.82, rim * 0.94 + 0.008));
+      if (Math.hypot(dx + 0.22, dy - 0.3) < 0.145 || Math.hypot(dx - 0.21, dy + 0.24) < 0.065)
+        c.copy(ink('#fffaf0'));
+      c.convertLinearToSRGB();
+      const k = (i + j * size) * 4;
+      data[k] = c.r * 255;
+      data[k + 1] = c.g * 255;
+      data[k + 2] = c.b * 255;
+      data[k + 3] = 255;
+    }
+  const map = new THREE.DataTexture(data, size, size);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.generateMipmaps = true;
+  map.magFilter = THREE.LinearFilter;
+  map.minFilter = THREE.LinearMipmapLinearFilter;
+  map.needsUpdate = true;
+  const m = new THREE.MeshStandardMaterial({ map, roughness: 0.42 });
+  eyeshades.set(key, m);
+  return m;
 }
-function shirtGeo(geo) { if (!hasDOM) paintLeafVertexColors(geo); return geo; }
 
-// ---------------------------------------------------------------------------
-// 尼克
-// ---------------------------------------------------------------------------
-export function createNick() {
-  const C = {
-    fur: mat('#d8722c', 0.95), furLight: mat('#f2dfc0', 0.95), furDark: mat('#8e4a20', 0.95), earTip: mat('#3b2418', 0.9),
-    nose: mat('#151012', 0.35), mouth: mat('#3a1f1a', 0.6), pants: mat('#b9a37a', 0.85), pantsDark: mat('#9c875f', 0.85),
-    tieA: mat('#6a3d9a', 0.6), tieB: mat('#2f5fa8', 0.6), whisker: mat('#3a2a20', 0.6), belt: mat('#4a3626', 0.6),
-    glass: mat('#0d0f12', 0.08, 0.6), frame: mat('#1a1a1a', 0.3, 0.5), button: mat('#efe8d4', 0.4), paw: mat('#5a3420', 0.9),
-  };
-  const shirt = shirtMaterial();
-  const root = new THREE.Group(); root.name = 'Nick';
-  const NS = 1.08; // 整体缩放：耳尖 ≈ 1.25m
-  const body = Grp(root, [0, 0, 0], [0, 0, 0], 'body'); body.scale.setScalar(NS);
-  const hipY = 0.5;
-  const hips = Grp(body, [0, hipY, 0], [0, 0, 0], 'hips');
-  M(hips, GEO.sph, C.pants, [0, 0.0, 0], [0.11, 0.085, 0.09]);
+function eyes(head, fox) {
+  const list = [];
+  for (const side of [-1, 1]) {
+    const x = fox ? 0.07 : 0.071,
+      y = fox ? 0.163 : 0.173;
+    const eye = pivot(
+      head,
+      'eye',
+      [side * x, y, fox ? 0.097 : 0.107],
+      [-0.07, side * 0.44, side * (fox ? 0.1 : 0.06)],
+    );
+    mesh(eye, eyeShape, eyeMaterial(fox, side), [0, 0, 0.002], [fox ? 0.052 : 0.048, fox ? 0.029 : 0.044, 0.019]);
+    list.push(eye);
+    const brow = fox ? '#754237' : '#554d60';
+    const raise = fox && side > 0 ? 0.007 : 0,
+      arch = fox ? 0.038 : 0.05;
+    stroke(
+      head,
+      brow,
+      [
+        [side * 0.031, y + 0.03 + raise, 0.115],
+        [side * 0.072, y + arch + raise, 0.104],
+        [side * 0.118, y + 0.031, 0.075],
+      ],
+      fox ? 0.009 : 0.0065,
+    );
+  }
+  return list;
+}
 
-  // 蓬松大尾巴（三节，末端奶油色）
-  const tail0 = Grp(hips, [0, 0.0, -0.08], [-2.05, 0, 0], 'tail'); tail0.rotation.order = 'YXZ';
-  M(tail0, GEO.sph, C.fur, [0, 0.08, 0], [0.05, 0.11, 0.055]);
-  const tail1 = Grp(tail0, [0, 0.16, 0], [0.25, 0, 0], 'tail1'); tail1.rotation.order = 'YXZ';
-  M(tail1, GEO.sph, C.fur, [0, 0.1, 0], [0.085, 0.14, 0.09]);
-  const tail2 = Grp(tail1, [0, 0.2, 0], [0.25, 0, 0], 'tail2'); tail2.rotation.order = 'YXZ';
-  M(tail2, GEO.sph, C.fur, [0, 0.03, 0], [0.075, 0.08, 0.08]);
-  M(tail2, GEO.sph, C.furLight, [0, 0.1, 0], [0.06, 0.085, 0.065]);
-  M(tail2, GEO.cone, C.furLight, [0, 0.19, 0], [0.035, 0.06, 0.035]);
+function headSculpt(head, fox) {
+  const sections = fox
+    ? [
+        [0, 0.022, 0.028, 0.022],
+        [0.013, 0.068, 0.058, 0.026],
+        [0.032, 0.108, 0.078, 0.021],
+        [0.06, 0.146, 0.096, 0.01],
+        [0.077, 0.162, 0.105, 0.002],
+        [0.091, 0.171, 0.11, -0.002],
+        [0.105, 0.174, 0.117, -0.006],
+        [0.119, 0.173, 0.121, -0.008],
+        [0.136, 0.168, 0.125, -0.01],
+        [0.156, 0.159, 0.126, -0.011],
+        [0.193, 0.143, 0.117, -0.014],
+        [0.223, 0.119, 0.098, -0.018],
+        [0.246, 0.087, 0.072, -0.018],
+        [0.262, 0.048, 0.04, -0.02],
+        [0.269, 0.002, 0.003, -0.02],
+      ]
+    : [
+        [0, 0.021, 0.025, 0.023],
+        [0.013, 0.067, 0.055, 0.024],
+        [0.03, 0.101, 0.08, 0.019],
+        [0.056, 0.138, 0.102, 0.01],
+        [0.088, 0.161, 0.12, 0.002],
+        [0.119, 0.169, 0.131, -0.003],
+        [0.154, 0.166, 0.135, -0.006],
+        [0.19, 0.157, 0.132, -0.009],
+        [0.222, 0.139, 0.118, -0.011],
+        [0.247, 0.112, 0.098, -0.013],
+        [0.267, 0.073, 0.067, -0.014],
+        [0.279, 0.033, 0.033, -0.014],
+        [0.283, 0.002, 0.002, -0.014],
+      ];
+  const skull = loft(sections, 48, (c, v, x, z) => {
+    c.copy(ink(fox ? '#ae4f34' : '#777384')).lerp(ink(fox ? '#ed914a' : '#aaa6b0'), smooth(v, 0.2, 0.88));
+    const mask = (fox ? 0.44 : 0.33) + 0.16 * Math.abs(x) - 0.075 * z + 0.022 * Math.cos(9 * x);
+    c.lerp(ink(fox ? '#f6d9ae' : '#dad3d1'), (1 - smooth(v, mask - 0.05, mask + 0.07)) * smooth(z, -0.72, 0.36));
+  });
+  if (fox) {
+    // Pull the front rings of the skull into the muzzle. The smile follows this same
+    // surface all the way around the cheeks, so it sits against the fur in profile.
+    const bridge = (y, front) => 0.1 * Math.exp(-(((y - 0.105) / 0.038) ** 2)) * Math.max(0, front) ** 8;
+    const pos = skull.attributes.position;
+    sections.forEach(([y, , depth, cz = 0], row) => {
+      for (let i = 0; i <= 48; i++) {
+        const k = row * 49 + i,
+          z = pos.getZ(k);
+        pos.setZ(k, z + bridge(y, (z - cz) / depth));
+      }
+    });
+    skull.computeVertexNormals();
+    const cheekPoint = (x, y) => {
+      const i = sections.findIndex((row) => row[0] >= y);
+      const [low, high] = [sections[i - 1], sections[i]];
+      const t = (y - low[0]) / (high[0] - low[0]);
+      const at = (k) => THREE.MathUtils.lerp(low[k] || 0, high[k] || 0, t);
+      const front = Math.sqrt(1 - (x / at(1)) ** 2);
+      return [x, y, at(3) + at(2) * front + bridge(y, front) + 0.0016];
+    };
+    mesh(
+      head,
+      loft(
+        [
+          [-0.017, 0.004, 0.007],
+          [-0.011, 0.018, 0.013],
+          [0.001, 0.027, 0.017],
+          [0.011, 0.025, 0.013],
+          [0.016, 0.01, 0.008],
+        ],
+        24,
+      ),
+      material('#32292c', 0.49),
+      [0, 0.118, 0.204],
+    );
+    for (const s of [-1, 1]) {
+      stroke(
+        head,
+        '#795347',
+        [
+          [0, 0.082],
+          [s * 0.028, 0.078],
+          [s * 0.06, 0.079],
+          [s * 0.087, 0.089],
+          [s * 0.102, s > 0 ? 0.103 : 0.096],
+        ].map(([x, y]) => cheekPoint(x, y)),
+        0.0032,
+      );
+      for (const [x, y] of [
+        [0.058, 0.102],
+        [0.072, 0.099],
+        [0.079, 0.108],
+      ])
+        oval(head, '#ab795d', cheekPoint(s * x, y), [0.0027, 0.0022, 0.002]);
+      const tuft = loft(
+        [
+          [0, 0.022, 0.027],
+          [0.018, 0.028, 0.03],
+          [0.044, 0.018, 0.02, -0.006],
+          [0.062, 0.002, 0.002, -0.016],
+        ],
+        16,
+      );
+      mesh(head, tuft, material('#dfba91'), [s * 0.142, 0.098, 0.007], [1, 1, 1], [-0.23, 0, -s * 1.93]);
+    }
+  } else {
+    const forelock = loft(
+      [
+        [0, 0.019, 0.012],
+        [0.014, 0.023, 0.012],
+        [0.027, 0.015, 0.008],
+        [0.043, 0.002, 0.002],
+      ],
+      16,
+    );
+    mesh(head, forelock, material('#9b95a1'), [-0.025, 0.257, 0.017], [1, 1, 1], [-0.25, 0, -0.95]);
+    oval(head, '#eee2de', [0, 0.064, 0.112], [0.051, 0.032, 0.029]);
+    stroke(
+      head,
+      '#725761',
+      [
+        [-0.05, 0.084, 0.133],
+        [-0.025, 0.074, 0.145],
+        [0, 0.072, 0.149],
+        [0.025, 0.075, 0.145],
+        [0.05, 0.085, 0.133],
+      ],
+      0.0051,
+    );
+    panel(head, '#f9efe2', [0, 0.066, 0.144], [0.021, 0.014, 0.007]);
+    for (const s of [-1, 1]) {
+      oval(head, '#e8dedc', [s * 0.032, 0.099, 0.116], [0.045, 0.034, 0.042], [0, s * 0.15, -s * 0.1]);
+      for (const [x, y, z] of [
+        [0.033, 0.101, 0.157],
+        [0.043, 0.094, 0.154],
+        [0.052, 0.105, 0.151],
+      ])
+        oval(head, '#a68f91', [s * x, y, z], [0.0024, 0.0024, 0.0015]);
+    }
+    mesh(
+      head,
+      loft(
+        [
+          [-0.013, 0.002, 0.004],
+          [-0.008, 0.012, 0.008],
+          [0, 0.021, 0.011],
+          [0.008, 0.019, 0.01],
+          [0.012, 0.008, 0.005],
+        ],
+        24,
+      ),
+      material('#ad6576', 0.58),
+      [0, 0.119, 0.154],
+    );
+  }
+  mesh(head, skull, painted);
+}
 
-  // 躯干：衬衫（车削体 + 夏威夷纹理）
-  const torso = Grp(hips, [0, 0.02, 0], [0, 0, 0], 'torso');
-  const sg = shirtGeo(lathe([[0.0, -0.06], [0.1, -0.055], [0.11, -0.02], [0.104, 0.08], [0.108, 0.18], [0.12, 0.27], [0.1, 0.32], [0.055, 0.345], [0.0, 0.35]], 24));
-  M(torso, sg, shirt, [0, 0, 0], [1, 1, 0.8]);
-  // 衬衫下摆（没塞进裤子）
-  const hem = shirtGeo(new THREE.CylinderGeometry(0.112, 0.118, 0.05, 24, 1, true));
-  M(torso, hem, shirt, [0, -0.06, 0], [1, 1, 0.82]);
-  // 敞开的领口露出奶油色胸毛
-  M(torso, GEO.sphMid, C.furLight, [0, 0.3, 0.06], [0.045, 0.045, 0.03], [-0.3, 0, 0]);
-  for (const sd of [1, -1]) {
-    M(torso, GEO.box, shirt, [sd * 0.04, 0.322, 0.062], [0.05, 0.012, 0.04], [-0.6, sd * 0.5, sd * 0.4]); // 翻领
-    M(torso, GEO.box, shirt, [sd * 0.008, 0.15, 0.087], [0.006, 0.26, 0.004]); // 门襟
+function ears(head, fox) {
+  const list = [];
+  for (const side of [-1, 1]) {
+    const ear = pivot(
+      head,
+      'ear mount',
+      [side * (fox ? 0.089 : 0.064), fox ? 0.203 : 0.244, fox ? -0.025 : -0.014],
+      [-0.12, side * (fox ? 0.18 : 0.12), -side * (fox ? 0.37 : side > 0 ? 0.16 : 0.095)],
+    );
+    const sections = fox
+      ? [
+          [0, 0.041, 0.032],
+          [0.023, 0.065, 0.04],
+          [0.051, 0.067, 0.039],
+          [0.081, 0.058, 0.035, -0.003],
+          [0.108, 0.045, 0.028, -0.007],
+          [0.137, 0.032, 0.021, -0.012],
+          [0.162, 0.018, 0.014, -0.017],
+          [0.182, 0.008, 0.007, -0.019],
+          [0.188, 0.001, 0.002, -0.021],
+        ]
+      : [
+          [0, 0.028, 0.021],
+          [0.032, 0.038, 0.029],
+          [0.075, 0.043, 0.031],
+          [0.126, 0.05, 0.03, -0.002],
+          [0.177, 0.055, 0.029, -0.006],
+          [0.225, 0.056, 0.028, -0.014],
+          [0.271, 0.051, 0.025, -0.022],
+          [0.306, 0.041, 0.021, -0.029],
+          [0.332, 0.03, 0.017, -0.035],
+          [0.349, 0.016, 0.01, -0.04],
+          [0.357, 0.002, 0.002, -0.043],
+        ];
+    const geometry = loft(sections, 32, (c, v, x, z) => {
+      c.copy(ink(fox ? '#db7d43' : '#aaa3af')).lerp(ink(fox ? '#694139' : '#716978'), smooth(-z, 0, 1) * 0.58);
+      c.lerp(ink(fox ? '#493238' : '#5e5769'), smooth(v, fox ? 0.66 : 0.76, 0.97));
+      const edge = (fox ? 0.79 : 0.7) * Math.max(0, Math.sin(Math.PI * v)) ** 0.62;
+      const inside =
+        smooth(z, 0.38, 0.69) *
+        (1 - smooth(Math.abs(x), edge - 0.08, edge + 0.08)) *
+        smooth(v, 0.08, 0.21) *
+        (1 - smooth(v, 0.81, 0.95));
+      const earColor = ink(fox ? '#f2cb9d' : '#d998a0');
+      c.lerp(earColor, inside);
+    });
+    const [base, tip] = bend(ear, geometry, painted, [[fox ? 0.108 : 0.183, fox ? 0.045 : 0.073]]);
+    list.push({ base, tip, side });
   }
-  for (let i = 0; i < 4; i++) M(torso, GEO.cylThin, C.button, [0.012, 0.03 + i * 0.065, 0.088 - (i > 2 ? 0.003 : 0)], [0.005, 0.003, 0.005], [Math.PI / 2, 0, 0], false);
-  // 领带：紫蓝条纹，松垮的结
-  const tie = Grp(torso, [0, 0.305, 0.072], [-0.1, 0, 0.06], 'tie');
-  M(tie, GEO.box, C.tieA, [0, 0, 0.005], [0.03, 0.022, 0.014], [0, 0, 0.1]); // 结
-  const stripes = 7;
-  for (let i = 0; i < stripes; i++) {
-    const w = 0.026 + i * 0.0035;
-    M(tie, GEO.box, i % 2 ? C.tieB : C.tieA, [0, -0.02 - i * 0.022, 0.012 + i * 0.0018], [w, 0.022, 0.004], [-0.06, 0, 0]);
-  }
-  M(tie, GEO.cone, C.tieA, [0, -0.02 - stripes * 0.022 + 0.004, 0.025], [0.034, 0.025, 0.003], [Math.PI, Math.PI / 4, 0]);
-  // 裤腰带
-  M(torso, GEO.cyl, C.belt, [0, -0.07, 0], [0.108, 0.018, 0.088]);
+  return list;
+}
 
-  // 脖子 + 头
-  const neck = Grp(torso, [0, 0.33, 0], [0, 0, 0], 'neck');
-  M(neck, GEO.cyl, C.fur, [0, 0.02, -0.005], [0.045, 0.06, 0.04]);
-  M(neck, GEO.sphLo, C.furLight, [0, 0.015, 0.025], [0.04, 0.04, 0.025]);
-  const head = Grp(neck, [0, 0.04, 0], [0, 0, 0], 'head');
-  const hc = 0.1;
-  M(head, GEO.sph, C.fur, [0, hc, -0.005], [0.1, 0.092, 0.1]);
-  // 脸颊奶油色 + 腮毛
-  for (const sd of [1, -1]) {
-    M(head, GEO.sphMid, C.furLight, [sd * 0.05, hc - 0.04, 0.045], [0.05, 0.042, 0.05], [0, 0, sd * 0.3]);
-    M(head, GEO.cone, C.furLight, [sd * 0.09, hc - 0.045, 0.01], [0.018, 0.05, 0.016], [0, 0, sd * 2.0]);
+let shirt, patch;
+function canvasMap(w, h, draw) {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  draw(canvas.getContext('2d'));
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+function summerShirt() {
+  if (shirt) return shirt;
+  const map = canvasMap(256, 256, (ctx) => {
+    ctx.fillStyle = '#9eb66d';
+    ctx.fillRect(0, 0, 256, 256);
+    for (const [cx, cy, rotation] of [
+      [42, 73, -0.68],
+      [167, 33, 0.53],
+      [179, 171, -0.56],
+      [44, 209, 1.32],
+    ]) {
+      for (const dx of [-256, 0, 256])
+        for (const dy of [-256, 0, 256]) {
+          ctx.save();
+          ctx.translate(cx + dx, cy + dy);
+          ctx.rotate(rotation);
+          ctx.fillStyle = '#65875e';
+          ctx.strokeStyle = '#698759';
+          ctx.lineWidth = 2.1;
+          ctx.beginPath();
+          ctx.moveTo(0, 29);
+          ctx.quadraticCurveTo(5, -5, 0, -36);
+          ctx.stroke();
+          for (let i = 0; i < 5; i++)
+            for (const side of [-1, 1]) {
+              const y = 18 - i * 9,
+                len = 23 - i * 2;
+              ctx.beginPath();
+              ctx.moveTo(2, y);
+              ctx.quadraticCurveTo(side * len, y - 2, side * (len + 2), y - 20);
+              ctx.quadraticCurveTo(side * 8, y - 19, 2, y);
+              ctx.fill();
+            }
+          ctx.restore();
+        }
+    }
+  });
+  if (map) {
+    map.wrapS = map.wrapT = THREE.RepeatWrapping;
+    map.repeat.set(1.75, 1);
   }
-  // 长吻：上半橙、下半奶油
-  M(head, GEO.cone, C.fur, [0, hc - 0.012, 0.12], [0.05, 0.13, 0.04], [Math.PI / 2, 0, 0]);
-  M(head, GEO.cone, C.furLight, [0, hc - 0.035, 0.11], [0.046, 0.11, 0.028], [Math.PI / 2, 0, 0]);
-  M(head, GEO.sphMid, C.fur, [0, hc + 0.0, 0.07], [0.055, 0.04, 0.06]); // 吻根
-  M(head, GEO.sphMid, C.nose, [0, hc - 0.006, 0.185], [0.017, 0.013, 0.013]);
-  M(head, GEO.sphLo, C.furDark, [0, hc + 0.022, 0.1], [0.015, 0.01, 0.04], [0.2, 0, 0]); // 鼻梁深色
-  // 坏笑：嘴角上扬（右侧更高）
-  M(head, GEO.box, C.mouth, [0.0, hc - 0.045, 0.125], [0.05, 0.003, 0.003], [0, 0, 0]);
-  M(head, GEO.box, C.mouth, [-0.03, hc - 0.04, 0.11], [0.018, 0.003, 0.003], [0, 0.6, 0.45]);
-  M(head, GEO.box, C.mouth, [0.028, hc - 0.043, 0.112], [0.012, 0.003, 0.003], [0, -0.6, -0.2]);
-  for (const sd of [1, -1]) for (let i = 0; i < 3; i++) {
-    between(head, GEO.cylThin, C.whisker, [sd * 0.02, hc - 0.012 - i * 0.006, 0.155], [sd * 0.075, hc - 0.002 - i * 0.016, 0.13], 0.0011);
+  shirt = new THREE.MeshStandardMaterial({ color: map ? 0xffffff : 0x9eb66d, map, roughness: 0.89 });
+  return shirt;
+}
+function backPatch(torso) {
+  if (!patch) {
+    const map = canvasMap(256, 96, (ctx) => {
+      ctx.fillStyle = '#27425a';
+      ctx.fillRect(0, 0, 256, 96);
+      ctx.strokeStyle = '#baaa74';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(5, 5, 246, 86);
+      ctx.fillStyle = '#f5dc93';
+      ctx.font = 'bold 66px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('ZPD', 128, 53);
+    });
+    if (!map) return;
+    patch = new THREE.MeshStandardMaterial({ map, roughness: matte });
   }
-  // 绿眼睛 + 半闭眼皮
-  const eyes = [];
-  for (const sd of [1, -1]) {
-    eyes.push(makeEye(head, { p: [sd * 0.04, hc + 0.025, 0.083], r: 0.024, iris: '#5fb04a', irisDark: '#2c6a2a', yaw: sd * 0.42, lidColor: '#d8722c', lidDrop: 0.32 }));
-    M(head, GEO.box, C.furDark, [sd * 0.042, hc + 0.05, 0.088], [0.03, 0.006, 0.007], [0, sd * 0.4, sd * (sd > 0 ? -0.05 : 0.18)]); // 一高一低的挑眉
+  const label = new THREE.PlaneGeometry(0.147, 0.052, 10, 3);
+  const positions = label.attributes.position;
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i);
+    const y = positions.getY(i);
+    const depth = (0.116 - 0.15 * Math.abs(y)) * Math.sqrt(1 - (x / 0.145) ** 2);
+    positions.setZ(i, depth);
   }
-  // 三角耳：深色耳尖，奶油色内耳
-  const ears = [];
-  for (const sd of [1, -1]) {
-    const base = Grp(head, [sd * 0.05, hc + 0.06, -0.02], [-0.1, 0, -sd * 0.28], 'ear'); base.rotation.order = 'XZY';
-    M(base, GEO.cone, C.fur, [0, 0.045, 0], [0.042, 0.1, 0.018]);
-    M(base, GEO.cone, C.furLight, [0, 0.04, 0.008], [0.028, 0.075, 0.008]);
-    const tip = Grp(base, [0, 0.07, 0], [0, 0, 0], 'earTip');
-    M(tip, GEO.cone, C.earTip, [0, 0.012, 0], [0.016, 0.044, 0.016]);
-    ears.push({ base, tip, side: sd });
-  }
-  // 墨镜（默认隐藏）
-  const shades = Grp(head, [0, hc + 0.027, 0.103], [0, 0, 0], 'sunglasses');
-  for (const sd of [1, -1]) {
-    M(shades, GEO.cyl, C.glass, [sd * 0.033, 0, 0], [0.024, 0.005, 0.019], [Math.PI / 2, 0, 0]);
-    M(shades, GEO.box, C.frame, [sd * 0.072, 0.003, -0.04], [0.004, 0.005, 0.08], [0, -sd * 0.15, 0]);
-  }
-  M(shades, GEO.box, C.frame, [0, 0.008, 0], [0.025, 0.005, 0.005]);
-  shades.visible = false;
+  label.computeVertexNormals();
+  mesh(torso, label, patch, [0, 0.203, 0], [1, 1, 1], [0, Math.PI, 0]);
+}
 
-  // 手臂：短袖衬衫
-  const arms = [];
-  for (const sd of [1, -1]) {
-    const upper = Grp(torso, [sd * 0.122, 0.285, 0], [0.05, 0, sd * 0.09], 'upperArm');
-    M(upper, capsule(0.028, 0.11), C.fur, [0, -0.08, 0]);
-    const sl = shirtGeo(new THREE.CylinderGeometry(0.04, 0.045, 0.1, 16, 1, false));
-    M(upper, sl, shirt, [0, -0.04, 0]);
-    const lower = Grp(upper, [0, -0.16, 0], [-0.15, 0, 0], 'lowerArm');
-    M(lower, capsule(0.025, 0.1), C.fur, [0, -0.06, 0]);
-    const hand = Grp(lower, [0, -0.14, 0.004], [0, 0, 0], 'hand');
-    M(hand, GEO.sphMid, C.furDark, [0, -0.01, 0], [0.026, 0.032, 0.021]);
-    M(hand, capsule(0.008, 0.014), C.furDark, [sd * -0.004, -0.004, 0.02], [1, 1, 1], [0.8, 0, 0]);
-    arms.push({ upper, lower, hand, side: sd });
+const navy = '#263b50',
+  blues = '#4d7290',
+  trouser = '#34465e',
+  leather = '#34404c',
+  brass = '#e0bb75';
+function makeTorso(hips, fox) {
+  const torso = pivot(hips, 'torso', [0, 0.012, 0]);
+  const uniform = fox ? summerShirt() : material(blues);
+  const profile = fox
+    ? [
+        [-0.06, 0.084, 0.069],
+        [-0.054, 0.117, 0.086],
+        [-0.043, 0.13, 0.099],
+        [-0.023, 0.131, 0.101],
+        [0.042, 0.125, 0.1],
+        [0.127, 0.127, 0.099],
+        [0.213, 0.141, 0.099],
+        [0.269, 0.15, 0.096],
+        [0.298, 0.135, 0.085],
+        [0.326, 0.076, 0.055],
+        [0.339, 0.048, 0.044],
+      ]
+    : [
+        [-0.025, 0.096, 0.08],
+        [-0.01, 0.12, 0.094],
+        [0.052, 0.116, 0.092],
+        [0.112, 0.114, 0.095],
+        [0.185, 0.134, 0.1],
+        [0.238, 0.146, 0.095],
+        [0.263, 0.133, 0.087],
+        [0.289, 0.06, 0.052],
+      ];
+  mesh(torso, loft(profile), uniform);
+  if (fox) {
+    const knot = material('#675878');
+    mesh(
+      torso,
+      loft(
+        [
+          [-0.012, 0.009, 0.009],
+          [-0.005, 0.019, 0.011],
+          [0.014, 0.023, 0.013],
+          [0.021, 0.014, 0.012],
+        ],
+        16,
+      ),
+      knot,
+      [0, 0.283, 0.104],
+    );
+    const stripeRows = [];
+    for (let i = 0; i <= 28; i++) {
+      const t = i / 28;
+      const width = t < 0.1 ? 0.004 + (0.023 * t) / 0.1 : 0.027 - (0.017 * (t - 0.1)) / 0.9;
+      stripeRows.push([-0.006 + t * 0.278, width, 0.0045, 0.113 - 0.006 * t * t, 0.012 * (1 - t)]);
+    }
+    mesh(
+      torso,
+      loft(stripeRows, 20, (c, v, x) => {
+        const band = (((v * 4.4 + x * 0.1) % 1) + 1) % 1;
+        c.copy(ink(band < 0.18 ? '#8299ab' : band < 0.26 ? '#ae9baf' : '#625371'));
+      }),
+      painted,
+    );
+    for (const s of [-1, 1])
+      mesh(
+        torso,
+        loft(
+          [
+            [0, 0.003, 0.004],
+            [0.025, 0.02, 0.008],
+            [0.056, 0.038, 0.011],
+            [0.068, 0.023, 0.009],
+          ],
+          16,
+        ),
+        material('#bcc98b'),
+        [s * 0.044, 0.248, 0.098],
+        [1, 1, 1],
+        [-0.21, s * 0.4, -s * 0.32],
+      );
+  } else {
+    mesh(
+      torso,
+      loft([
+        [0.025, 0.105, 0.089],
+        [0.036, 0.12, 0.101],
+        [0.08, 0.125, 0.104],
+        [0.162, 0.136, 0.106],
+        [0.205, 0.145, 0.11],
+        [0.239, 0.139, 0.102],
+        [0.253, 0.115, 0.085],
+        [0.263, 0.075, 0.065],
+      ]),
+      material(navy),
+    );
+    mesh(
+      torso,
+      loft([
+        [-0.015, 0.107, 0.087],
+        [-0.011, 0.127, 0.1],
+        [0.02, 0.128, 0.101],
+        [0.024, 0.115, 0.09],
+      ]),
+      material(leather),
+    );
+    for (const s of [-1, 1]) {
+      mesh(
+        torso,
+        loft(
+          [
+            [0, 0.009, 0.009],
+            [0.004, 0.027, 0.018],
+            [0.044, 0.027, 0.018],
+            [0.052, 0.023, 0.016],
+          ],
+          12,
+        ),
+        material('#435060'),
+        [s * 0.11, -0.026, 0.034],
+      );
+      oval(torso, blues, [s * 0.063, 0.246, 0.069], [0.05, 0.014, 0.029], [0.2, s * 0.4, s * 0.32]);
+      panel(torso, '#a7afb0', [s * 0.087, 0.25, -0.076], [0.023, 0.012, 0.024], [0, s * 0.4, 0]);
+      panel(torso, '#52657a', [s * 0.067, 0.106, 0.098], [0.064, 0.008, 0.009], [0, s * 0.36, 0]);
+    }
+    const badge = loft(
+      [
+        [-0.023, 0.002, 0.003],
+        [-0.013, 0.014, 0.005],
+        [0.009, 0.022, 0.006],
+        [0.017, 0.02, 0.006],
+        [0.024, 0.007, 0.004],
+      ],
+      16,
+    );
+    mesh(torso, badge, material(brass, metal, 0.46), [0.062, 0.191, 0.101], [1, 1, 1], [0, 0.35, 0]);
+    oval(torso, '#e99048', [-0.067, 0.191, 0.098], [0.006, 0.026, 0.006], [0, 0, -0.13]);
+    panel(torso, '#7da567', [-0.071, 0.215, 0.097], [0.008, 0.01, 0.008]);
+    panel(torso, brass, [0, 0.005, 0.104], [0.038, 0.024, 0.007]);
+    backPatch(torso);
   }
-  // 腿：卡其裤（卷到脚踝）+ 赤脚深色爪
-  const legs = [];
-  for (const sd of [1, -1]) {
-    const thigh = Grp(hips, [sd * 0.055, -0.01, 0], [0, 0, 0], 'thigh');
-    M(thigh, capsule(0.046, 0.15), C.pants, [0, -0.1, 0]);
-    const shin = Grp(thigh, [0, -0.22, 0], [0, 0, 0], 'shin');
-    M(shin, capsule(0.04, 0.15), C.pants, [0, -0.095, 0]);
-    M(shin, GEO.cyl, C.pantsDark, [0, -0.18, 0], [0.043, 0.03, 0.043]); // 卷边
-    M(shin, GEO.cyl, C.paw, [0, -0.21, 0], [0.025, 0.04, 0.025]); // 脚踝
-    const foot = Grp(shin, [0, -0.22, 0], [0, 0, 0], 'foot');
-    M(foot, GEO.sph, C.paw, [0, -0.025, 0.035], [0.04, 0.028, 0.075]);
-    for (let i = -1; i <= 1; i++) M(foot, GEO.sphLo, C.paw, [i * 0.016, -0.03, 0.1], [0.014, 0.014, 0.016]);
-    legs.push({ thigh, shin, foot, side: sd });
-  }
+  return torso;
+}
 
-  const rig = { root, hips, torso, head, arms, legs, ears, tail: [tail0, tail1, tail2], eyes };
-  const anim = makeRigAnimator(rig, { hipY, legLen: hipY, scale: NS, sitY: 0.27, earFlop: 0.6, tailSway: 0.9, armOut: 0.03 });
+function makeArms(torso, fox) {
+  const list = [];
+  const sleeve = fox ? summerShirt() : material(blues);
+  for (const side of [-1, 1]) {
+    const upper = pivot(
+      torso,
+      'upperArm',
+      [side * (fox ? 0.135 : 0.134), fox ? 0.268 : 0.238, 0],
+      [0.04, 0, side * 0.075],
+    );
+    const len = fox ? 0.151 : 0.126;
+    mesh(
+      upper,
+      loft(
+        [
+          [-len - 0.014, 0.027, 0.029],
+          [-len + 0.017, 0.034, 0.034],
+          [-0.065, 0.039, 0.041],
+          [-0.029, 0.043, 0.044],
+          [0.006, 0.038, 0.04],
+          [0.025, 0.022, 0.024],
+          [0.031, 0.003, 0.004],
+        ],
+        20,
+      ),
+      fox ? material('#cf7949') : sleeve,
+    );
+    if (fox)
+      mesh(
+        upper,
+        loft(
+          [
+            [-0.091, 0.045, 0.046],
+            [-0.084, 0.048, 0.047],
+            [-0.05, 0.049, 0.049],
+            [-0.008, 0.05, 0.049],
+            [0.017, 0.039, 0.04],
+            [0.026, 0.016, 0.019],
+          ],
+          20,
+        ),
+        sleeve,
+      );
+    else {
+      oval(upper, navy, [side * 0.01, 0.004, 0], [0.043, 0.032, 0.052]);
+      panel(upper, brass, [side * 0.041, -0.029, 0], [0.006, 0.009, 0.043], [0, 0, side * 0.14]);
+    }
+    const lower = pivot(upper, 'lowerArm', [0, -len, 0], [-0.13, 0, 0]);
+    const fore = fox ? 0.13 : 0.107;
+    mesh(
+      lower,
+      loft(
+        [
+          [-fore - 0.004, 0.022, 0.023],
+          [-fore + 0.013, 0.027, 0.026],
+          [-fore * 0.56, 0.033, 0.034],
+          [-0.012, 0.033, 0.032],
+          [0.016, 0.025, 0.026],
+          [0.022, 0.007, 0.01],
+        ],
+        18,
+      ),
+      fox ? material('#bf6b42') : sleeve,
+    );
+    if (!fox)
+      mesh(
+        lower,
+        loft(
+          [
+            [-fore - 0.003, 0.028, 0.027],
+            [-fore + 0.004, 0.031, 0.03],
+            [-fore + 0.031, 0.032, 0.031],
+          ],
+          16,
+        ),
+        material(navy),
+      );
+    const hand = pivot(lower, 'hand', [0, -fore, 0.003]);
+    oval(hand, fox ? '#764839' : '#98929e', [0, -0.022, 0.003], [0.031, 0.045, 0.025]);
+    oval(
+      hand,
+      fox ? '#83513d' : '#aaa3ad',
+      [-side * 0.018, -0.018, 0.018],
+      [0.014, 0.023, 0.013],
+      [-0.36, 0, side * 0.35],
+    );
+    list.push({ upper, lower, hand, side });
+  }
+  return list;
+}
+
+function makeLegs(hips, fox) {
+  const list = [],
+    upperLen = fox ? 0.218 : 0.163,
+    lowerLen = fox ? 0.211 : 0.161;
+  const cloth = material(fox ? '#9c9277' : trouser);
+  for (const side of [-1, 1]) {
+    const thigh = pivot(hips, 'thigh', [side * (fox ? 0.066 : 0.067), -0.014, 0]);
+    mesh(
+      thigh,
+      loft(
+        [
+          [-upperLen - 0.021, 0.032, 0.037, 0.007],
+          [-upperLen + 0.008, 0.045, 0.045, 0.008],
+          [-upperLen * 0.62, 0.054, 0.056, 0.002],
+          [-0.046, 0.064, 0.065, -0.004],
+          [0.012, 0.06, 0.055],
+          [0.032, 0.037, 0.038],
+        ],
+        20,
+      ),
+      cloth,
+    );
+    const shin = pivot(thigh, 'shin', [0, -upperLen, 0]);
+    mesh(
+      shin,
+      loft(
+        [
+          [-lowerLen + 0.006, 0.036, 0.041],
+          [-lowerLen + 0.024, 0.041, 0.043],
+          [-lowerLen * 0.58, 0.044, 0.049, -0.007],
+          [-0.027, 0.046, 0.049],
+          [0.011, 0.044, 0.044, 0.006],
+          [0.026, 0.029, 0.029, 0.007],
+        ],
+        18,
+      ),
+      cloth,
+    );
+    const cuff = fox ? '#b8ac8b' : navy;
+    mesh(
+      shin,
+      loft(
+        [
+          [-lowerLen + 0.003, 0.038, 0.04],
+          [-lowerLen + 0.007, 0.043, 0.046],
+          [-lowerLen + 0.032, 0.044, 0.045],
+        ],
+        16,
+      ),
+      material(cuff),
+    );
+    const foot = pivot(shin, 'foot', [0, -lowerLen, 0]);
+    const c = fox ? '#684436' : '#9995a1';
+    oval(
+      foot,
+      c,
+      [0, -0.013, fox ? 0.04 : 0.056],
+      [fox ? 0.044 : 0.052, 0.036, fox ? 0.08 : 0.101],
+      [-0.07, 0, 0],
+    );
+    for (const toe of [-1, 0, 1])
+      oval(foot, fox ? '#775041' : '#b0a9b3', [toe * 0.019, -0.02, fox ? 0.098 : 0.132], [0.019, 0.018, 0.027]);
+    list.push({ thigh, shin, foot, side });
+  }
+  return list;
+}
+
+function makeTail(hips, fox) {
+  const mount = pivot(hips, 'tail mount', [0, 0.019, -0.084], [fox ? -1.96 : -1.24, 0, 0]);
+  if (!fox) {
+    mesh(
+      mount,
+      loft(
+        [
+          [0, 0.027, 0.035],
+          [0.02, 0.053, 0.048],
+          [0.047, 0.062, 0.057],
+          [0.071, 0.056, 0.049],
+          [0.091, 0.039, 0.036],
+          [0.106, 0.015, 0.018],
+          [0.11, 0.002, 0.003],
+        ],
+        22,
+        (c, v) => c.copy(ink('#aaa3b0')).lerp(ink('#f3eae3'), smooth(v, 0, 0.75)),
+      ),
+      painted,
+    );
+    return [mount];
+  }
+  const geometry = loft(
+    [
+      [0, 0.035, 0.039],
+      [0.04, 0.046, 0.047],
+      [0.088, 0.062, 0.061, 0.002, 0.004],
+      [0.145, 0.083, 0.08, 0.006, 0.014],
+      [0.208, 0.099, 0.092, 0.014, 0.033],
+      [0.27, 0.104, 0.095, 0.018, 0.057],
+      [0.333, 0.1, 0.089, 0.02, 0.081],
+      [0.387, 0.084, 0.076, 0.015, 0.099],
+      [0.432, 0.063, 0.058, 0.005, 0.112],
+      [0.47, 0.041, 0.04, -0.01, 0.12],
+      [0.5, 0.022, 0.024, -0.023, 0.124],
+      [0.523, 0.003, 0.003, -0.037, 0.129],
+    ],
+    30,
+    (c, v, x, z) => {
+      c.copy(ink('#a65037')).lerp(ink('#e99550'), 0.26 + v * 0.43 + z * 0.22);
+      c.lerp(
+        ink('#f6deb3'),
+        smooth(v, 0.67 + 0.047 * Math.cos(x * 9) + z * 0.04, 0.74 + 0.047 * Math.cos(x * 9) + z * 0.04),
+      );
+    },
+  );
+  return bend(mount, geometry, painted, [
+    [0.142, 0.06],
+    [0.321, 0.07],
+  ]);
+}
+
+function officer(fox) {
+  const root = new THREE.Group();
+  root.name = fox ? 'Nick' : 'Judy';
+  const body = pivot(root, 'body', [0, 0, 0]);
+  const scale = fox ? 1.04 : 1;
+  body.scale.setScalar(scale);
+  const hipY = fox ? 0.494 : 0.39,
+    sitY = fox ? 0.275 : 0.2;
+  const hips = pivot(body, 'hips', [0, hipY, 0]);
+  oval(hips, fox ? '#9c9277' : trouser, [0, -0.013, -0.006], [0.127, 0.089, 0.1]);
+  const torso = makeTorso(hips, fox);
+  const neck = pivot(torso, 'neck', [0, fox ? 0.31 : 0.271, 0]);
+  oval(neck, fox ? '#e4ab77' : '#aaa4af', [0, 0.03, 0], [0.061, 0.067, 0.05]);
+  const head = pivot(neck, 'head', [0, 0.035, 0]);
+  headSculpt(head, fox);
+  const eyeBones = eyes(head, fox),
+    earBones = ears(head, fox);
+  const arms = makeArms(torso, fox),
+    legs = makeLegs(hips, fox),
+    tail = makeTail(hips, fox);
+  let shades;
+  if (fox) {
+    shades = pivot(head, 'sunglasses', [0, 0.162, 0.117]);
+    for (const s of [-1, 1]) {
+      mesh(
+        shades,
+        sphere,
+        material('#314b50', 0.25, 0.28),
+        [s * 0.064, 0, 0],
+        [0.051, 0.03, 0.012],
+        [0, s * 0.35, 0],
+      );
+      stroke(
+        shades,
+        '#725743',
+        [
+          [s * 0.105, 0.008, -0.013],
+          [s * 0.138, 0.011, -0.047],
+          [s * 0.141, 0, -0.112],
+        ],
+        0.0045,
+      );
+    }
+    stroke(
+      shades,
+      '#725743',
+      [
+        [-0.023, 0.005, 0.006],
+        [0, 0.012, 0.016],
+        [0.023, 0.005, 0.006],
+      ],
+      0.005,
+    );
+    shades.visible = false;
+  }
+  batchRigidParts(root);
+  const rig = { root, hips, torso, head, arms, legs, ears: earBones, tail, eyes: eyeBones };
+  const anim = makeRigAnimator(rig, {
+    hipY,
+    legLen: hipY,
+    scale,
+    sitY,
+    earFlop: fox ? 0.63 : 1.12,
+    tailSway: fox ? 0.92 : 0.6,
+    armOut: 0.05,
+  });
   root.userData = {
-    name: 'Nick Wilde', height: 1.17, totalHeight: 1.25, sitHipY: 0.29,
-    bones: { hips, torso, neck, head, arms, legs, ears, tail: [tail0, tail1, tail2] },
-    update: anim.update, setPose: anim.setPose, getPose: anim.getPose,
-    setSunglasses(on) { shades.visible = !!on; },
+    name: fox ? 'Nick Wilde' : 'Judy Hopps',
+    height: fox ? 1.17 : 1.0,
+    totalHeight: fox ? 1.25 : 1.35,
+    sitHipY: sitY * scale,
+    bones: { hips, torso, neck, head, arms, legs, ears: earBones, tail },
+    update: anim.update,
+    setPose: anim.setPose,
+    getPose: anim.getPose,
   };
-  root.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  if (fox)
+    root.userData.setSunglasses = (on) => {
+      shades.visible = !!on;
+    };
   anim.update(0.016, 0);
   return root;
+}
+
+export function createJudy() {
+  return officer(false);
+}
+export function createNick() {
+  return officer(true);
 }

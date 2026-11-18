@@ -93,7 +93,7 @@ export function build(ctx) {
   const nearRZ = (z, m) => RZ.some(r => Math.abs(z - r) < m);
   const ASPH = 0x3f4248, YEL = 0xf2c230, WHT = 0xf4f0e6;
   for (const x of RX) {
-    b.box(ROAD_W, 0.02, rect.z1 - rect.z0, x, 0, (rect.z0 + rect.z1) / 2, ASPH, { shadow: false });
+    b.box(ROAD_W, 0.02, rect.z1 - rect.z0, x, 0, (rect.z0 + rect.z1) / 2, ASPH, { mat: 'asphalt', shadow: false });
     for (let z = rect.z0 + 3; z < rect.z1 - 3; z += 6) {
       if (nearRZ(z, HW + 5.5)) continue;
       b.box(0.25, 0.01, 3, x, 0.02, z, YEL, { shadow: false });
@@ -102,7 +102,7 @@ export function build(ctx) {
     }
   }
   for (const z of RZ) {
-    b.box(rect.x1 - rect.x0, 0.02, ROAD_W, (rect.x0 + rect.x1) / 2, 0, z, ASPH, { shadow: false });
+    b.box(rect.x1 - rect.x0, 0.02, ROAD_W, (rect.x0 + rect.x1) / 2, 0, z, ASPH, { mat: 'asphalt', shadow: false });
     for (let x = rect.x0 + 3; x < rect.x1 - 3; x += 6) {
       if (nearRX(x, HW + 5.5)) continue;
       b.box(3, 0.01, 0.25, x, 0.02, z, YEL, { shadow: false });

@@ -14,6 +14,8 @@
 //   车管所 DMV       (-160, -80) 灰色办公楼 + 排队护栏，入口 (-160, -52)
 // 所有地标 front 点及 POI 周围 3m 无碰撞体；道路上无碰撞体。
 import * as THREE from 'three';
+import { parkedCruiser } from '../../game/car-model.js';
+import { streetTree, precinctFacade, civicFountain } from '../civic-art.js';
 import { DISTRICTS, LANDMARKS, ROAD_W, SIDEWALK_W, blocksOf } from '../layout.js';
 
 const D = DISTRICTS.savanna;
@@ -120,8 +122,8 @@ const pick = (r, a) => a[Math.floor(r() * a.length) % a.length];
 const FACADE_C = [0xe8c99a, 0xf0b98a, 0xe89f7a, 0xd98c6a, 0xf2d6a2, 0xbfd8c2, 0x9cc9c0, 0xf3e3c3, 0xe7b0a0, 0xd7c08a, 0xc9a27a, 0xf1cfa0, 0xa8c8d8, 0xe6a66e];
 const BIG_C = [0xb9a68e, 0xc8b496, 0xa8977f, 0x9e9a8f, 0xc7b8a3, 0xb3a089];
 const GLASS_C = [0x7fb7d8, 0x8fc4d8, 0x9fd0c8, 0x6fa8c0, 0xb5d4e0, 0x8ac0b4, 0xd9b77a, 0xc8a0c8];
-const AWN_C = [0xd9534f, 0x2e8b57, 0x2a6fb5, 0xf0ad4e, 0x8e44ad, 0xe67e22, 0x16a085, 0xc0392b, 0x34495e];
-const SIGN_C = [0xffd166, 0xff7aa2, 0x7ae7ff, 0x9dff8a, 0xffffff, 0xffa94d, 0xc9a0ff];
+const AWN_C = [0xad604d, 0x537a68, 0x567d89, 0xce9d64, 0x746471, 0xb87b52, 0x407a75, 0xa65a46, 0x42586a];
+const SIGN_C = [0xd5b788, 0xb78573, 0x749892, 0x99a381, 0xe5d1ac, 0xc88e63, 0x918192];
 const BILLBOARDS = [
   ['动物城 · 一切皆有可能', '#1d3b6e', '#ffd166'],
   ['ZOOTOPIA\nAnyone can be anything', '#e85d75', '#ffffff'],
@@ -197,7 +199,7 @@ export function build(ctx) {
     if (R.a1 > s + 0.5) segs.push([s, R.a1, sX, false]);
     for (const [s0, s1, x0, x1] of segs) {
       const L = s1 - s0, m = (s0 + s1) / 2;
-      rbox(R, L, ROAD_W, 0.02, m, R.c, 0, ASPH);
+      rbox(R, L, ROAD_W, 0.02, m, R.c, 0, ASPH, { mat: 'asphalt', shadow: false });
       const m0 = s0 + (x0 ? 6.5 : 0), m1 = s1 - (x1 ? 6.5 : 0);
       if (m1 - m0 > 1) {
         // 中央双黄线
@@ -214,7 +216,7 @@ export function build(ctx) {
       if (x1) zebra(s1, -1);
     }
   }
-  for (const [x, z] of inter.values()) b.box(ROAD_W, 0.02, ROAD_W, x, 0, z, ASPH, { shadow: false });
+  for (const [x, z] of inter.values()) b.box(ROAD_W, 0.02, ROAD_W, x, 0, z, ASPH, { mat: 'asphalt', shadow: false });
 
   // ---------- 2. 街区：人行道地台、路缘石 ----------
   const SIDE_C = 0xcfc8bb, CURB_C = 0x8f8a82, LOT_C = 0xbdb4a4;
@@ -247,7 +249,7 @@ export function build(ctx) {
   }
   for (const p of blocks) {
     const w = p.x1 - p.x0, d = p.z1 - p.z0, cx = (p.x0 + p.x1) / 2, cz = (p.z0 + p.z1) / 2;
-    b.box(w, SW, d, cx, 0, cz, SIDE_C, { shadow: false, jitter: 0.04 });
+    b.box(w, SW, d, cx, 0, cz, SIDE_C, { mat: 'paving', shadow: false });
     col.box(cx, cz, w, d, { yMax: SW, walkable: true });
     if (p.road.W) b.box(0.3, SW + 0.01, d, p.x0 + 0.15, 0, cz, CURB_C, { shadow: false });
     if (p.road.E) b.box(0.3, SW + 0.01, d, p.x1 - 0.15, 0, cz, CURB_C, { shadow: false });
@@ -280,30 +282,22 @@ export function build(ctx) {
     col.circle(x, z, 0.18, { yMax: 6.5 });
   };
   const tree = (x, z, planter = true) => {
-    if (planter) {
-      b.box(1.6, 0.45, 1.6, x, SW, z, 0x9b8f80);
-      b.box(1.3, 0.02, 1.3, x, SW + 0.45, z, 0x5b4636, { shadow: false });
-      col.box(x, z, 1.6, 1.6, { yMax: SW + 0.45, walkable: true });
-    }
-    const h = 2.6 + r() * 1.6;
-    b.cyl(0.12, 0.18, h, x, SW, z, 0x6b4f3a, { seg: 6 });
-    col.circle(x, z, 0.22, { yMax: SW + h });
-    const leaf = pick(r, [0x5f9e4a, 0x6aa84f, 0x4f8a3c, 0x7fae55]);
-    if (r() < 0.5) {
-      // 金合欢式扁平树冠
-      b.sphere(2.0, x, SW + h + 0.5, z, leaf, { mat: 'leaf', seg: 8, sy: 0.38 });
-      b.sphere(1.3, x + 0.6, SW + h + 0.9, z - 0.3, leaf, { mat: 'leaf', seg: 6, sy: 0.4 });
-    } else {
-      b.sphere(1.5, x, SW + h + 0.6, z, leaf, { mat: 'leaf', seg: 8 });
-      b.sphere(1.0, x - 0.5, SW + h + 1.4, z + 0.3, leaf, { mat: 'leaf', seg: 6 });
-    }
+    const h = 2.85 + r() * 1.4, tint = Math.floor(r() * 4), wide = r() < .56;
+    streetTree(b, col, x, z, SW, planter, h, tint, wide);
   };
   const bench = (x, z, alongX) => {
-    const w = alongX ? 2.0 : 0.6, d = alongX ? 0.6 : 2.0;
-    b.box(w, 0.08, d, x, SW + 0.45, z, 0x8a5a36);
-    b.box(alongX ? 2.0 : 0.08, 0.5, alongX ? 0.08 : 2.0, x + (alongX ? 0 : 0.28), SW + 0.53, z + (alongX ? 0.28 : 0), 0x8a5a36);
-    for (const s of [-0.8, 0.8]) b.box(alongX ? 0.08 : 0.5, 0.45, alongX ? 0.5 : 0.08, x + (alongX ? s : 0), SW, z + (alongX ? 0 : s), 0x2f3338, { mat: 'metal' });
-    col.box(x, z, w, d, { yMax: SW + 0.55, walkable: true });
+    const slat = (width, height, depth, along, up, back, color) => {
+      b.box(alongX ? width : depth, height, alongX ? depth : width,
+        x + (alongX ? along : back), SW + up, z + (alongX ? back : along), color);
+    };
+    for (const u of [-.21, -.07, .07, .21]) slat(2.12,.067,.116,0,.44,u,0xa67752);
+    for (const y of [.63,.83]) slat(2.12,.145,.075,0,y,.27,0xae8058);
+    for (const u of [-.78,.78]) {
+      slat(.084,.48,.52,u,0,0,0x3c514e);
+      slat(.077,.50,.074,u,.44,.27,0x3c514e);
+      slat(.085,.065,.47,u,.63,0,0x52625a);
+    }
+    col.box(x,z,alongX ? 2.12 : .60,alongX ? .60 : 2.12,{yMax:SW+.55,walkable:true});
   };
   const hydrant = (x, z) => {
     b.cyl(0.16, 0.18, 0.6, x, SW, z, 0xd8342c, { mat: 'shiny', seg: 8 });
@@ -381,59 +375,14 @@ export function build(ctx) {
     const P = blocks.find(p => p.landmark === 'plaza');
     const half = Math.min(P.x1 - P.x0, P.z1 - P.z0) / 2 - 1;
     // 铺装：外圈浅砂岩，内圈放射状深色环
-    b.box(half * 2, 0.02, half * 2, 0, SW, 0, 0xe3d6bd, { shadow: false });
+    b.box(half * 2, 0.02, half * 2, 0, SW, 0, 0xe3d6bd, { mat: 'paving', shadow: false });
     b.cyl(16, 16, 0.02, 0, SW + 0.005, 0, 0xcdb48c, { seg: 16, shadow: false });
     b.cyl(12.5, 12.5, 0.02, 0, SW + 0.01, 0, 0xe8dcc5, { seg: 16, shadow: false });
     for (let k = 0; k < 8; k++) {
       const a = k * Math.PI / 4;
       b.box(0.5, 0.02, half - 16, Math.sin(a) * (16 + (half - 16) / 2), SW + 0.004, Math.cos(a) * (16 + (half - 16) / 2), 0xcdb48c, { ry: a, shadow: false });
     }
-    // 底层水池（矮池沿可以站上去）
-    b.cyl(9.4, 9.6, 0.65, 0, SW, 0, 0xd9cbb0, { seg: 16 });
-    b.cyl(8.9, 8.9, 0.02, 0, SW + 0.55, 0, 0x4aa3c9, { mat: 'water', seg: 16, shadow: false });
-    col.circle(0, 0, 9.6, { yMax: SW + 0.65, walkable: true });
-    // 第二层：立柱 + 大碗
-    b.cyl(1.6, 2.1, 3.0, 0, SW + 0.55, 0, 0xd2c2a4, { seg: 12 });
-    b.cyl(5.2, 2.0, 0.9, 0, SW + 3.5, 0, 0xd9cbb0, { seg: 16 });
-    b.cyl(4.9, 4.9, 0.02, 0, SW + 4.3, 0, 0x4aa3c9, { mat: 'water', seg: 16, shadow: false });
-    // 第三层
-    b.cyl(0.9, 1.2, 2.6, 0, SW + 4.4, 0, 0xd2c2a4, { seg: 10 });
-    b.cyl(2.7, 1.0, 0.6, 0, SW + 6.8, 0, 0xd9cbb0, { seg: 14 });
-    b.cyl(2.5, 2.5, 0.02, 0, SW + 7.35, 0, 0x4aa3c9, { mat: 'water', seg: 14, shadow: false });
-    // 顶部：金色球 + 尖顶
-    b.cyl(0.4, 0.6, 1.6, 0, SW + 7.4, 0, 0xd2c2a4, { seg: 8 });
-    b.sphere(0.65, 0, SW + 9.4, 0, 0xd4a64a, { mat: 'metal', seg: 10 });
-    col.circle(0, 0, 2.1, { yMax: SW + 9.5 });
-    // 动物雕像（四只喷水的小象头，围绕第二层立柱）
-    for (let k = 0; k < 4; k++) {
-      const a = k * Math.PI / 2 + Math.PI / 4;
-      const x = Math.sin(a) * 2.2, z = Math.cos(a) * 2.2;
-      b.sphere(0.6, x, SW + 2.7, z, 0xa7a7a0, { seg: 8 });
-      b.sphere(0.35, x * 1.3, SW + 2.9, z * 1.3, 0xa7a7a0, { seg: 8, sx: 0.4 });
-    }
-    // 动画水：顶部水柱、三层溢流水幕、四个象鼻水柱
-    const wMat = new THREE.MeshStandardMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.55, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
-    const jetTop = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.35, 1, 8, 1, true).translate(0, 0.5, 0), wMat);
-    jetTop.position.set(0, SW + 10.0, 0); scene.add(jetTop);
-    const curtains = [[2.65, SW + 6.8, 2.6], [5.1, SW + 3.5, 3.0]].map(([rad, y, h]) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.25, h, 16, 1, true).translate(0, -h / 2, 0), wMat);
-      m.position.set(0, y + 0.85, 0); scene.add(m); return m;
-    });
-    const trunkJets = [];
-    const arcGeo = new THREE.TorusGeometry(1.4, 0.07, 4, 10, Math.PI * 0.75);
-    for (let k = 0; k < 4; k++) {
-      const a = k * Math.PI / 2 + Math.PI / 4;
-      const m = new THREE.Mesh(arcGeo, wMat);
-      m.position.set(Math.sin(a) * 4.2, SW + 2.6, Math.cos(a) * 4.2);
-      m.rotation.y = a - Math.PI / 2;
-      scene.add(m); trunkJets.push(m);
-    }
-    animated.push(jetTop, ...curtains, ...trunkJets);
-    ctx.animate((dt, t) => {
-      jetTop.scale.set(1, 2.4 + Math.sin(t * 3.1) * 0.6 + Math.sin(t * 7.3) * 0.2, 1);
-      curtains.forEach((c, i) => { c.scale.x = c.scale.z = 1 + Math.sin(t * 4 + i) * 0.015; });
-      trunkJets.forEach((m, i) => { const s = 1 + Math.sin(t * 2.5 + i * 1.7) * 0.12; m.scale.set(s, s, 1); });
-    });
+    animated.push(civicFountain(b, col, scene, ctx.animate, SW));
 
     // 广场树阵（四角）、长椅、报刊亭、大屏幕
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
@@ -473,22 +422,6 @@ export function build(ctx) {
   }
 
   // ---------- 6. 通用工具：警车、立柱、穹顶 ----------
-  const car = (x, z, ry, body, police = false) => {
-    const o = { mat: 'shiny', ry };
-    const ax = Math.sin(ry), az = Math.cos(ry); // 车头方向
-    b.box(2.0, 0.75, 4.4, x, 0.3 + SW, z, body, o);
-    b.box(1.8, 0.65, 2.3, x - ax * 0.2, 1.05 + SW, z - az * 0.2, police ? 0x1d2a44 : 0x9fc4dc, { mat: 'glass', ry });
-    if (police) {
-      b.box(2.02, 0.35, 1.6, x, 0.55 + SW, z, 0x111111, o); // 车门黑色涂装
-      b.box(1.2, 0.18, 0.35, x - ax * 0.2, 1.7 + SW, z - az * 0.2, 0xff2a2a, { mat: 'glow', ry });
-      b.box(0.6, 0.19, 0.36, x - ax * 0.2 + Math.cos(ry) * 0.3, 1.7 + SW, z - az * 0.2 - Math.sin(ry) * 0.3, 0x2a6bff, { mat: 'glow', ry });
-    }
-    for (const [lx, lz] of [[-0.95, 1.4], [0.95, 1.4], [-0.95, -1.4], [0.95, -1.4]]) {
-      const wx = x + lx * Math.cos(ry) + lz * ax, wz = z - lx * Math.sin(ry) + lz * az;
-      b.cyl(0.38, 0.38, 0.25, wx, SW + 0.38, wz, 0x1b1b1b, { seg: 8, rz: Math.PI / 2, ry });
-    }
-    col.box(x, z, 2.0, 4.4, { ry, yMax: SW + 1.75 });
-  };
   const column = (x, z, y0, h, rad, color = 0xf1e6cf) => {
     b.box(rad * 2.6, 0.4, rad * 2.6, x, y0, z, color);
     b.cyl(rad * 0.88, rad, h - 0.8, x, y0 + 0.4, z, color, { seg: 10 });
@@ -521,9 +454,9 @@ export function build(ctx) {
     b.sphere(0.5, 80, SW + 53.4, -101, 0xff3030, { mat: 'glow', seg: 8 });
     col.box(80, -101, 24, 14, { yMax: SW + 54 });
     // 蓝色玻璃中庭（圆柱 + 顶环）
-    b.cyl(10, 10, 30, 80, SW, -82, 0x3f86c6, { mat: 'glass', seg: 16 });
-    for (let y = 6; y < 30; y += 6) b.cyl(10.15, 10.15, 0.35, 80, SW + y, -82, 0xe8eef3, { mat: 'metal', seg: 16 });
-    b.cyl(10.6, 10.6, 1.2, 80, SW + 30, -82, 0xd2bd93, { seg: 16 });
+    b.cyl(10, 10, 30, 80, SW, -82, 0x518780, { mat: 'glass', seg: 32 });
+    for (let y = 6; y < 30; y += 6) b.cyl(10.15, 10.15, 0.35, 80, SW + y, -82, 0xb8a47e, { mat: 'shiny', seg: 32 });
+    b.cyl(10.6, 10.6, 1.2, 80, SW + 30, -82, 0xd2bd93, { seg: 32 });
     dome(80, SW + 31.2, -82, 7, 0x6aa0d0, 0.35);
     col.circle(80, -82, 10, { yMax: SW + 33 });
     // 入口雨棚 + 大小门
@@ -532,14 +465,19 @@ export function build(ctx) {
     b.box(5, 7, 0.4, 80, SW, -72.1, 0x1d2a44, { mat: 'glass' });   // 大象门
     b.box(1.6, 2.6, 0.4, 75.5, SW, -72.1, 0x1d2a44, { mat: 'glass' }); // 普通门
     b.box(0.45, 0.65, 0.4, 73.8, SW, -72.1, 0x1d2a44, { mat: 'glass' }); // 鼠门
-    signMesh('ZPD', 9, { bg: '#2c4a8a', fg: '#ffffff', w: 512, h: 192, font: 'bold 150px "Arial Black",sans-serif' }, 80, SW + 22, -71.6, 0);
-    signMesh('动物城警察局 · 第一分局', 12, { bg: '#f1e6cf', fg: '#2c4a8a', w: 1024, h: 112 }, 80, SW + 9.6, -67.9, 0);
+    precinctFacade(b, SW);
+    signMesh('ZPD', 4.3, { bg: '#265854', fg: '#f5d89d', w: 512, h: 112, font: 'bold 98px Georgia,serif' }, 80, SW + 8.29, -67.20, 0);
+    signMesh('动物城警察局 · 第一分局', 11, { bg: '#294d4b', fg: '#f4deb0', w: 1024, h: 112 }, 80, SW + 10.25, -71.18, 0);
     // 前广场：铺装、旗杆、停车位与警车
-    b.box(60, 0.02, 18, 80, SW, -61, 0xd8ccb5, { shadow: false });
+    b.box(60, 0.02, 18, 80, SW, -61, 0xd8ccb5, { mat: 'paving', shadow: false });
     for (const s of [-1, 1]) {
       const fx = 80 + s * 9, fz = -60;
       b.cyl(0.12, 0.15, 12, fx, SW, fz, 0xdadfe4, { mat: 'metal', seg: 6 });
-      b.box(0.05, 1.6, 2.6, fx, SW + 10, fz + 1.3, s < 0 ? 0x2c4a8a : 0xf2c230, { ry: Math.PI / 2 });
+      b.sphere(.19, fx, SW + 12.1, fz, 0xdbb97d, { seg: 10, mat: 'shiny' });
+      b.box(2.8,.085,.10,fx+1.32,SW+11.55,fz,0xb59462);
+      b.box(2.12,3.70,.055,fx+1.33,SW+7.84,fz,s<0 ? 0x386462 : 0xb97d4d);
+      for (const by of [8.09,8.32,11.19]) b.box(2.12,.085,.08,fx+1.33,SW+by,fz,0xe6c795);
+      b.box(.54,.54,.09,fx+1.33,SW+9.52,fz,0xe6c795,{rz:Math.PI/4});
       col.circle(fx, fz, 0.2, { yMax: SW + 12 });
     }
     for (const side of [-1, 1]) {
@@ -547,7 +485,10 @@ export function build(ctx) {
         const px = 80 + side * (18 + k * 3.4), pz = -63.5;
         b.box(0.12, 0.01, 5.2, px - 1.7, SW + 0.02, pz, 0xffffff, { shadow: false });
         if (k === 3) b.box(0.12, 0.01, 5.2, px + 1.7, SW + 0.02, pz, 0xffffff, { shadow: false });
-        if (k !== 1 || side > 0) car(px, pz, 0, 0xf4f6f8, true);
+        if (k !== 1 || side > 0) {
+          parkedCruiser(b,px,SW,pz);
+          col.box(px,pz,2.0,4.6,{yMax:SW+1.9});
+        }
       }
     }
     ctx.addLabel(L.x, 36, L.z, L.name, '#4f8fe0');
@@ -723,7 +664,7 @@ export function build(ctx) {
       col.box(mx, mz, 6, 4, { yMax: SW + 7 });
     }
     // 广场铺装 + 两侧花坛
-    b.box(50, 0.02, 12, cx, SW, 60, 0xd8ccb5, { shadow: false });
+    b.box(50, 0.02, 12, cx, SW, 60, 0xd8ccb5, { mat: 'paving', shadow: false });
     for (const s of [-1, 1]) {
       b.box(6, 0.6, 3, cx + s * 20, SW, 63, 0xa89a86);
       b.box(5.6, 0.3, 2.6, cx + s * 20, SW + 0.6, 63, 0xd9534f, { mat: 'leaf' });
@@ -885,8 +826,8 @@ export function build(ctx) {
         const rc = pick(r, [0xb5523b, 0x7a4a3a, 0x3f6f6a, 0x8a5a3a, 0x5a6f8a]);
         const ridge = Math.min(w, d) * 0.32;
         const alongX = w > d;
-        b.box(alongX ? w + 0.8 : d * 0.75, ridge * 0.9, alongX ? d * 0.75 : d + 0.8, cx, SW + y + 0.5, cz, rc, { rx: alongX ? 0 : 0, mat: 'solid' });
-        b.box(alongX ? w + 1.0 : 0.6, ridge * 0.35, alongX ? 0.6 : d + 1.0, cx, SW + y + 0.5 + ridge * 0.85, cz, shade(rc, 0.8));
+        const roofH = Math.min(ridge * .78, 4.1);
+        addGeo(b, PRISM, cx, SW+y+.5, cz, (alongX ? w : d)+.8, roofH, (alongX ? d : w)+.8, alongX ? 0 : Math.PI/2, rc);
         for (let k2 = -1; k2 <= 1; k2 += 2) b.box(2.2, 1.8, 1.4, cx + (alongX ? k2 * w * 0.22 : (d * 0.36)), SW + y + 0.6, cz + (alongX ? d * 0.36 : k2 * d * 0.22), 0xf3e3c3, { mat: 'facade' });
       } else roof(cx, cz, tw / 0.78, td / 0.78, SW + y + 0.5);
       // 每层阳台条（立面层次）

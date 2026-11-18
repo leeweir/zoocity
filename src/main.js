@@ -19,7 +19,7 @@ import { Crowd, ambientLine, iconOf } from './game/npcs.js';
 import { Interactions } from './game/interact.js';
 import { Detective } from './game/detective.js';
 import { TrafficCop } from './game/traffic_cop.js';
-import { UI, esc } from './ui/ui.js';
+import { UI, esc, portraits } from './ui/ui.js';
 import { Minimap } from './ui/minimap.js';
 import { createJudy, createNick } from './chars/heroes.js';
 
@@ -45,7 +45,7 @@ const ui = new UI();
 const audio = new Audio();
 for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, () => audio.unlock(), { passive: true });
 ui.onType = () => audio.sfx('type');
-const input = new Input(canvas);
+const input = new Input(canvas, () => started);
 ui.bindTouch(input);
 const col = new Colliders();
 // 运河处的基础地面 = 河床（低于水面），人会沉到水里游泳
@@ -58,15 +58,28 @@ const labels = [];
 const title = document.createElement('div');
 title.id = 'title';
 title.innerHTML = `
-  <h1>疯狂动物城</h1>
-  <div class="sub">ZOOTOPIA · 侦探档案</div>
-  <div class="pick hidden">
-    <div class="heroCard" data-h="judy"><div class="face">🐰</div><h3>朱迪·霍普斯</h3><p>跑得快、跳得高<br>敏锐听觉：线索探测范围更大<br>擅长正面询问、讲道理</p></div>
-    <div class="heroCard" data-h="nick"><div class="face">🦊</div><h3>尼克·王尔德</h3><p>老江湖、人脉广<br>能撬开“道上”朋友的嘴<br>识破骗局、套话专家</p></div>
-  </div>
-  <div class="loading">正在建造动物城…</div>
-  <div class="bar"><i></i></div>
-  <div class="keys">${IS_TOUCH ? '左手拖动摇杆移动（推到底奔跑），右手滑动转视角，双指捏合缩放。<br>两位警官会一起行动，点击左上角头像切换操控。' : '两位警官会一起行动，随时按 <kbd>Tab</kbd> 切换操控。<br>不同的角色能发现不同的线索、问出不同的证词。'}</div>`;
+  <main class="title-copy">
+    <div class="wordmark" lang="en">ZOOTOPIA</div>
+    <h1>疯狂动物城</h1>
+    <p class="sub">侦探档案</p>
+    <div class="roster">
+      <div class="loading" role="status">正在建造动物城…</div>
+      <div class="bar"><i></i></div>
+      <div class="pick hidden">
+        <button class="heroCard" type="button" data-h="judy">
+          <span class="portrait"><img src="${portraits.judy}" alt=""></span>
+          <span class="identity"><strong>朱迪·霍普斯</strong><small>敏锐听觉 · 追踪线索</small></span>
+          <span class="enter" aria-hidden="true">↗</span>
+        </button>
+        <button class="heroCard" type="button" data-h="nick">
+          <span class="portrait"><img src="${portraits.nick}" alt=""></span>
+          <span class="identity"><strong>尼克·王尔德</strong><small>街头人脉 · 识破骗局</small></span>
+          <span class="enter" aria-hidden="true">↗</span>
+        </button>
+      </div>
+    </div>
+    <p class="keys">${IS_TOUCH ? '两位警官会一起行动，点击左上角头像切换。' : '两位警官会一起行动，按 <kbd>Tab</kbd> 切换。'}</p>
+  </main>`;
 document.body.appendChild(title);
 const setLoad = (t, p) => { title.querySelector('.loading').textContent = t; title.querySelector('.bar i').style.width = (p * 100) + '%'; };
 
@@ -168,13 +181,21 @@ function travelTo(L) {
 }
 
 async function start(heroKey) {
+  if (started) return;
+  title.inert = true;
   title.querySelector('.pick').classList.add('hidden');
   ui.show('hud');
   title.style.transition = 'opacity .8s'; title.style.opacity = 0;
   setTimeout(() => title.remove(), 800);
-  if (player.current !== heroKey) player.switchHero();
+  if (player.current !== heroKey) {
+    const { x, y, z } = player.pos, yaw = player.yaw;
+    player.switchHero();
+    player.setPosition(x,y,z,yaw);
+  }
   ui.setHero(player.current);
   started = true;
+  input.endFrame();
+  requestAnimationFrame(loop);
   detective.restore();
   if (localStorage.getItem?.('zootopia-pos')) restorePos();
   if (!detective.active && !detective.solved.donut) {
@@ -212,12 +233,11 @@ async function init() {
   player.onSwimChange = on => { if (on) { audio.sfx('splash'); ui.toast('🏊 游泳中 · Shift 加速 · 游到岸边台阶上岸，或按 G 用竹蜻蜓飞走', 2600); } };
   player.onFlyChange = on => { ui.toast(on ? '🚁 竹蜻蜓起飞！Space 上升 · C 下降 · Shift 加速 · G 降落' : '🚁 竹蜻蜓收起', 2200); audio?.copter(on); };
   minimap = new Minimap(ui, travelTo);
-  setLoad('选择你的角色', 1);
+  setLoad('选择出勤警官', 1);
   const pick = title.querySelector('.pick');
   pick.classList.remove('hidden');
   title.querySelector('.bar').style.display = 'none';
   pick.querySelectorAll('.heroCard').forEach(c => c.onclick = () => start(c.dataset.h));
-  requestAnimationFrame(loop);
 }
 
 // —— 存档导出 / 导入：所有 zootopia-* 与 zoo-* 本地数据打包成一段存档码，可下载为文件或复制 ——
@@ -423,13 +443,14 @@ function updateMarkers() {
 
 function loop() {
   requestAnimationFrame(loop);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const frameTime = clock.getDelta();
+  const dt = Math.min(frameTime, 0.05);
   const t = clock.elapsedTime;
   SharedUniforms.uTime.value = t;
-  fpsAcc += dt; fpsN++;
+  fpsAcc += frameTime; fpsN++;
   if (fpsAcc > 1) { ui.setFps(`${Math.round(fpsN / fpsAcc)} fps · ${renderer.info.render.calls} calls · ${(renderer.info.render.triangles / 1e6).toFixed(2)}M tris`); fpsAcc = 0; fpsN = 0; }
 
-  if (started && !paused) {
+  if (!paused) {
     handleInput(dt);
     player.wet = env.state.wet;
     player.update(dt, input, cam.yaw);
@@ -447,7 +468,7 @@ function loop() {
     cop.update(dt, t);
     for (const v of cruisers) if (v !== player.vehicle) v.update(dt, 0);
     for (const v of rides) if (v !== player.vehicle && v.speed !== 0) { v.speed *= 0.9; if (Math.abs(v.speed) < 0.05) v.speed = 0; v.update(dt, 0); }
-    perf.update(dt, player.pos);
+    perf.update(frameTime, player.pos);
     env.state.interior = insideName;
     env.update(dt, player.pos, dk, { cam: camera.position, siren: [...cruisers].find(v => v.siren)?.pos });
     // 声音：脚步（按步频）、引擎、环境与音乐
@@ -494,19 +515,12 @@ function loop() {
     const D = DISTRICTS[dk];
     minimap.update(player.pos, player.yaw, cam.yaw, cop.active ? cop.nearestOffender() : detective.targetPos(player.pos), insideName || (D ? D.name : dk === 'canal' ? '运河' : '郊外'), [...cruisers.map(v => ({ x: v.pos.x, z: v.pos.z, color: '#4aa3ff', r: 5 })), ...cop.mapDots()]);
     updateMarkers();
-  } else if (!started) {
-    // 标题画面：环绕镜头
-    const a = t * 0.05;
-    camera.position.set(Math.cos(a) * 160, 70, Math.sin(a) * 160);
-    camera.lookAt(0, 20, 0);
-    env.update(dt * 0, new THREE.Vector3(0, 0, 0), 'savanna');
-    for (const f of animators) f(dt, t, camera.position);
   }
   input.endFrame();
   renderer.render(scene, camera);
 }
 
-// 标题画面先渲染一帧环境（世界在建造中）
+// 城市在选角页后建造，出勤后才启动 WebGL 帧循环。
 init().catch(e => { console.error(e); setLoad('加载失败：' + e.message, 1); });
 
 // 调试接口

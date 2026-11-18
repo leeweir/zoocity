@@ -26,6 +26,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export const SharedUniforms = {
   uNight: { value: 0 },     // 0 = 白天, 1 = 深夜
   uTime: { value: 0 },
+  uWet: { value: 0 },
 };
 
 const _mats = {};
@@ -54,25 +55,72 @@ float wmask = 0.0; float wlit = 0.0;
     float v = (vWPos.y - uBase) / uCell.y;
     vec2 c = floor(vec2(u, v)); vec2 f = fract(vec2(u, v));
     float plane = floor(dot(vWPos.xz, n.xz) * 0.5);
-    float inside = step(0.16, f.x) * step(f.x, 0.84) * step(0.2, f.y) * step(f.y, 0.86) * step(0.0, v);
-    // 窗框阴影边
-    float frame = inside * (1.0 - step(0.2, f.x) * step(f.x, 0.8) * step(0.25, f.y) * step(f.y, 0.81));
+    vec2 aa = min(fwidth(vec2(u,v)),vec2(0.09)) + 0.001;
+    vec2 opening = smoothstep(vec2(.13,.18)-aa,vec2(.13,.18)+aa,f) *
+                   (1.0-smoothstep(vec2(.87,.86)-aa,vec2(.87,.86)+aa,f));
+    float inside = opening.x * opening.y * step(0.0,v);
+    float inner = smoothstep(.16,.19,f.x)*(1.0-smoothstep(.81,.84,f.x))*
+                  smoothstep(.22,.25,f.y)*(1.0-smoothstep(.79,.83,f.y));
+    float mullion = (1.0-smoothstep(.010,.024+aa.x,abs(f.x-.5))) * (1.0-smoothstep(.025,.09,aa.x));
+    float crossbar = 1.0-smoothstep(.012,.022+aa.y,abs(f.y-.67));
+    float frame = 1.0-inner*(1.0-max(mullion,crossbar)*.86);
     wmask = inside;
     float h = zhash(c + vec2(plane * 3.7, plane * 1.3));
-    wlit = step(0.45, h);
-    vec3 sky = mix(vec3(0.16, 0.24, 0.32), vec3(0.55, 0.7, 0.82), clamp(f.y * 1.2 - 0.1 + h * 0.25, 0.0, 1.0));
-    vec3 nightc = mix(vec3(0.05, 0.06, 0.09), vec3(1.0, 0.82, 0.5), wlit);
+    wlit = step(.4,h)*(.30+.70*h)*(.62+.38*smoothstep(.12,.74,f.y));
+    float reflectBand = smoothstep(.12,.63,f.y*.75+f.x*.33+h*.22);
+    vec3 sky = mix(vec3(.062,.13,.15),vec3(.28,.51,.52),reflectBand);
+    float shade = step(.68,h)*smoothstep(.70-h*.28,.72-h*.28,f.y);
+    sky = mix(sky,vec3(.39,.36,.27),shade*.57);
+    vec3 nightc = mix(vec3(.023,.048,.065),vec3(.94,.59,.25),wlit);
     vec3 wc = mix(sky, nightc * 0.6, uNight);
-    wc = mix(wc, diffuseColor.rgb * 0.55, frame);
+    wc = mix(wc, diffuseColor.rgb * .46, frame);
+    float sill = (1.0-smoothstep(.014,.027+aa.y,abs(f.y-.16))) * opening.x * step(0.0,v);
+    diffuseColor.rgb *= 1.0 + sill*.27;
+    diffuseColor.rgb *= 1.0 - .13*(1.0-smoothstep(.02,.12,f.y)) * step(0.0,v);
     diffuseColor.rgb = mix(diffuseColor.rgb, wc, wmask);
     wmask *= (1.0 - frame);
   }
 }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.12, wmask);')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, 0.6, wmask);')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += wmask * wlit * uNight * vec3(1.0, 0.78, 0.45) * 1.4;');
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, 0.28, wmask);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += wmask*wlit*uNight*vec3(.86,.49,.22);');
   };
   m.customProgramCacheKey = () => `facade_${cellW}_${cellH}_${base}`;
+  return m;
+}
+
+let grit;
+function pavingMaterial(stone) {
+  if (!grit) {
+    const size = 128, data = new Uint8Array(size * size), random = rng(8871);
+    for (let i = 0; i < data.length; i++) data[i] = random() * 255;
+    grit = new THREE.DataTexture(data, size, size, THREE.RedFormat);
+    grit.wrapS = grit.wrapT = THREE.RepeatWrapping;
+    grit.minFilter = THREE.LinearMipMapLinearFilter; grit.magFilter = THREE.LinearFilter;
+    grit.generateMipmaps = true; grit.needsUpdate = true;
+  }
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .92 });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uGrit = { value: grit }; sh.uniforms.uWet = SharedUniforms.uWet;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 groundUV;')
+      .replace('#include <worldpos_vertex>','#include <worldpos_vertex>\ngroundUV = (modelMatrix * vec4(transformed,1.)).xz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>',
+      '#include <common>\nvarying vec2 groundUV; uniform sampler2D uGrit; uniform float uWet;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float fleck = texture2D(uGrit,groundUV*.47).r - .5;
+        diffuseColor.rgb *= 1.0 + fleck*${stone ? '.16' : '.40'};
+        ${stone ? `vec2 tile = groundUV / vec2(1.7,.90);
+          tile.x += mod(floor(tile.y),2.0)*.5;
+          vec2 edge = .5-abs(fract(tile)-.5);
+          vec2 width = fwidth(groundUV/vec2(1.7,.90))+.001;
+          vec2 joint = (1.-smoothstep(vec2(.009),vec2(.014)+width,edge)) * clamp(.034/width,0.,1.);
+          float tone = texture2D(uGrit,(floor(tile)+.5)/128.).r-.5;
+          diffuseColor.rgb *= 1. + tone*.11 - max(joint.x,joint.y)*.30;`
+          : 'diffuseColor.rgb *= .97 + .09*texture2D(uGrit,groundUV*.006).r;'}
+        diffuseColor.rgb *= 1.-uWet*.16;`)
+      .replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, .35, uWet);');
+  };
+  m.customProgramCacheKey = () => stone ? 'limestonePaving' : 'asphaltGrit';
   return m;
 }
 
@@ -80,18 +128,28 @@ export function getMaterial(kind) {
   if (_mats[kind]) return _mats[kind];
   let m;
   switch (kind) {
+    case 'paving': m = pavingMaterial(true); break;
+    case 'asphalt': m = pavingMaterial(false); break;
     case 'shiny': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.15 }); break;
     case 'metal': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.85 }); break;
     case 'facade': m = facadeMaterial(3.2, 3.6, 4.5); break;
     case 'facadeBig': m = facadeMaterial(5.0, 6.5, 7.0); break;
     case 'facadeSmall': m = facadeMaterial(0.28, 0.32, 0.36); break;
     case 'glass': {
-      m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.08, metalness: 0.9, emissive: 0xffc070, emissiveIntensity: 0 });
+      m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .21, metalness: .48 });
       m.onBeforeCompile = (sh) => {
         sh.uniforms.uNight = SharedUniforms.uNight;
+        sh.vertexShader = sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 glassWorld;')
+          .replace('#include <worldpos_vertex>','#include <worldpos_vertex>\nglassWorld = (modelMatrix * vec4(transformed,1.)).xyz;');
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\nuniform float uNight;')
-          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(1.0,0.8,0.5) * uNight * 0.35;');
+          .replace('#include <common>', '#include <common>\nuniform float uNight; varying vec3 glassWorld;')
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+            if (uNight > .001) {
+              float floorY = glassWorld.y / 4.25;
+              float band = smoothstep(.11,.27,fract(floorY))*(1.-smoothstep(.68,.88,fract(floorY)));
+              float interior = .5+.5*sin(floor(floorY)*5.7+glassWorld.x*.24+glassWorld.z*.32);
+              totalEmissiveRadiance += uNight*(vec3(.005,.018,.020) + vec3(.37,.20,.078)*band*interior*smoothstep(1.9,3.,glassWorld.y));
+            }`);
       };
       m.customProgramCacheKey = () => 'glassNight';
       break;
@@ -100,6 +158,7 @@ export function getMaterial(kind) {
     case 'water': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.82 }); break;
     case 'ice': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.7 }); break;
     case 'leaf': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }); break;
+    case 'canopy': m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }); break;
     default: m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.0 });
   }
   _mats[kind] = m;
@@ -164,9 +223,12 @@ export class Builder {
     const jitter = o.jitter ?? 0;
     const n = g.attributes.position.count;
     const col = new Float32Array(n * 3);
+    const tint = o.vertexColors && geometry.getAttribute('color');
     for (let i = 0; i < n; i++) {
       const k = 1 + (jitter ? (Math.random() - 0.5) * jitter : 0);
-      col[i * 3] = _c.r * k; col[i * 3 + 1] = _c.g * k; col[i * 3 + 2] = _c.b * k;
+      col[i * 3] = _c.r * k * (tint ? tint.getX(i) : 1);
+      col[i * 3 + 1] = _c.g * k * (tint ? tint.getY(i) : 1);
+      col[i * 3 + 2] = _c.b * k * (tint ? tint.getZ(i) : 1);
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.computeBoundingBox();
